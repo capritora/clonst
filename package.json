@@ -20,7 +20,7 @@
     "test": "npm run build && node --test \"dist/tests/**/*.test.js\""
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "keywords": [
     "mcp",

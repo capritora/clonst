@@ -36,7 +36,7 @@ and what the review concretely caught.
 
 ## Requirements
 
-- Node.js >= 20
+- Node.js >= 22
 - The Codex CLI, installed and logged in:
   ```
   npm install -g @openai/codex
