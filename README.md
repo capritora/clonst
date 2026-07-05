@@ -1,5 +1,7 @@
 # Clonst
 
+[![CI](https://github.com/capritora/clonst/actions/workflows/ci.yml/badge.svg)](https://github.com/capritora/clonst/actions/workflows/ci.yml)
+
 **Adversarial code review for Claude Code, powered by Codex.** Clonst is an MCP
 server that lets Claude (in Claude Code) get its plans and code critiqued by
 Codex (OpenAI), in a ping-pong loop until both sides reach consensus. Both LLMs
