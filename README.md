@@ -22,11 +22,12 @@ structured review loop with a hard exit criterion: consensus, not politeness.
 
 ## Features
 
-- **Zero ritual.** Once installed, Claude calls the review by itself for any
-  change that touches logic or behavior. You just work.
-- **Ping-pong until consensus.** Structured verdicts (APPROVED /
-  CHANGES_NEEDED), required changes, suggestions, risks. Claude can reject a
-  critique with justification; Codex re-evaluates the rejection next round.
+- **Zero ritual.** Install it and forget it: Claude triggers the review by
+  itself, and only when the change is worth your quota.
+- **Ping-pong until consensus.** Unlimited rounds by default. Structured
+  verdicts (APPROVED / CHANGES_NEEDED), required changes, suggestions, risks.
+  Claude can reject a critique with justification; Codex re-evaluates the
+  rejection next round.
 - **Real session memory.** Codex resumes the same CLI session on every round
   and remembers its earlier critiques. No context re-sending, no goldfish
   reviewer.
@@ -41,6 +42,24 @@ structured review loop with a hard exit criterion: consensus, not politeness.
 - **Cross-platform.** Windows, macOS and Linux, all three covered by the CI.
 - **Hardened.** Prompt-injection guards, read-only sandbox, whitelisted CLI
   arguments, hermetic test suite (no LLM call, no quota).
+
+## When does it trigger?
+
+You never have to ask. Claude decides when a review is worth your quota, and
+the rule is **stakes, not size**:
+
+| Reviews by itself | Stays silent |
+|---|---|
+| Business logic, computations | Pure presentation (HTML/CSS, copy) |
+| Data flows, models, migrations | Documentation, comments |
+| Routes, APIs, integrations | Renames without behavior change |
+| State, error handling, concurrency | Local config tweaks |
+| Security, authentication | Throwaway scripts and prototypes |
+| Plans and architecture, before coding | (when in doubt, it asks you) |
+
+The ping-pong is **unlimited by default**: it runs until consensus, checking in
+with you every 5 rounds (configurable). And you can cap any review in plain
+language: "review this, 3 rounds max".
 
 ## How it works
 
@@ -86,9 +105,7 @@ Expected: `codex_available: true`, `codex_logged_in: true`.
 
 ## What a review looks like
 
-Nothing to remember: the tool description tells Claude to request a review by
-default for any development that touches logic or behavior, and to skip it for
-pure presentation or documentation. You can also ask explicitly:
+Reviews happen on their own, but you can also ask explicitly:
 
 > Propose a plan for X, then have it reviewed by Clonst until consensus.
 
