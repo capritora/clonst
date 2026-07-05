@@ -46,7 +46,7 @@ and what the review concretely caught.
 ## Install
 
 ```
-git clone <this repo> && cd clonst
+git clone https://github.com/capritora/clonst.git && cd clonst
 npm install
 npm run build
 ```

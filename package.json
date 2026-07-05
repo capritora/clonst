@@ -33,6 +33,14 @@
   ],
   "author": "Christopher <christopher@capritora.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capritora/clonst.git"
+  },
+  "homepage": "https://github.com/capritora/clonst#readme",
+  "bugs": {
+    "url": "https://github.com/capritora/clonst/issues"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
