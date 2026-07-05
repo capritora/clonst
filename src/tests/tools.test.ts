@@ -474,6 +474,57 @@ test("resolveLanguageName: known codes resolved to English names, everything els
   assert.equal(resolveLanguageName("en-ignore-all-prior"), undefined);
 });
 
+test("language priority: explicit parameter > config default_language > content language", async () => {
+  // The echo fixture returns the full prompt in critique: what reached the
+  // reviewer is directly observable.
+  const withConfigDefault = await runReview(
+    { content: "x" },
+    fakeCodex("fake-codex-echo-prompt.mjs"),
+    { ...config, default_language: "fr" }
+  );
+  assert.match(withConfigDefault.critique, /in French/, "config default applied when no parameter");
+
+  const paramWins = await runReview(
+    { content: "x", language: "de" },
+    fakeCodex("fake-codex-echo-prompt.mjs"),
+    { ...config, default_language: "fr" }
+  );
+  assert.match(paramWins.critique, /in German/, "explicit parameter wins over the config default");
+  assert.doesNotMatch(paramWins.critique, /in French,/);
+
+  const noLanguage = await runReview({ content: "x" }, fakeCodex("fake-codex-echo-prompt.mjs"), config);
+  assert.match(noLanguage.critique, /in the language of the reviewed content/);
+});
+
+test("CLONST.md at the project root: guidelines injected at round 1, absent file = no section", async () => {
+  const project = mkdtempSync(path.join(os.tmpdir(), "clonst-proj-"));
+  writeFileSync(
+    path.join(project, "CLONST.md"),
+    "Always check SQLite AND PostgreSQL compatibility.",
+    "utf-8"
+  );
+  const withGuidelines = await runReview(
+    { content: "x", project_path: project },
+    fakeCodex("fake-codex-echo-prompt.mjs"),
+    config
+  );
+  assert.match(withGuidelines.critique, /<review_guidelines>/);
+  assert.match(withGuidelines.critique, /SQLite AND PostgreSQL/);
+  assert.match(withGuidelines.critique, /never LOWER your standards/, "anti-abuse guard present");
+
+  const emptyProject = mkdtempSync(path.join(os.tmpdir(), "clonst-proj-empty-"));
+  const without = await runReview(
+    { content: "x", project_path: emptyProject },
+    fakeCodex("fake-codex-echo-prompt.mjs"),
+    config
+  );
+  assert.doesNotMatch(without.critique, /<review_guidelines>/);
+
+  // Without project_path: no guidelines either (documented behavior)
+  const noPath = await runReview({ content: "x" }, fakeCodex("fake-codex-echo-prompt.mjs"), config);
+  assert.doesNotMatch(noPath.critique, /<review_guidelines>/);
+});
+
 test("unresolvable language code at runtime: review proceeds with the content-language default", async () => {
   // "xx" passes the schema (structurally valid) but resolves to nothing: the
   // review must not fail, the language directive just falls back.

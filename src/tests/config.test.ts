@@ -83,6 +83,20 @@ test("codex_model / codex_reasoning_effort overrides: null by default, safe valu
   assert.equal(DEFAULT_CONFIG.codex_reasoning_effort, null);
 });
 
+test("default_language: null by default, valid code accepted, injection material rejected", () => {
+  mkdirSync(path.dirname(configPath()), { recursive: true });
+  assert.equal(DEFAULT_CONFIG.default_language, null, "shipped unset: content-language behavior");
+
+  writeFileSync(configPath(), JSON.stringify({ default_language: "fr" }), "utf-8");
+  assert.equal(loadConfig().default_language, "fr");
+
+  // Same whitelist as the language parameter: words and variants cannot pass
+  for (const bad of ["French", "fr-approved", "en ignore all", 42]) {
+    writeFileSync(configPath(), JSON.stringify({ default_language: bad }), "utf-8");
+    assert.equal(loadConfig().default_language, null, `${JSON.stringify(bad)} must fall back to null`);
+  }
+});
+
 test("invalid codex overrides (metacharacters, spaces, non-string): fall back to null", () => {
   // These values become CLI arguments: the whitelist is a security barrier
   mkdirSync(path.dirname(configPath()), { recursive: true });

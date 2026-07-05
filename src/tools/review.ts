@@ -1,21 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { isConsensus, parseReviewerResponse } from "../core/consensus.js";
 import { buildFirstRoundPrompt, buildFollowupRoundPrompt } from "../core/formatter.js";
 import { ProviderError, type ReviewerProvider } from "../providers/base.js";
 import type { ClonstConfig } from "../utils/config.js";
+import { SAFE_LANGUAGE_TAG, resolveLanguageName } from "../utils/language.js";
 import { SessionLogger, logStderr } from "../utils/logger.js";
 
-/**
- * language[-Script][-Region] ONLY (e.g. "fr", "pt-BR", "zh-Hans", "zh-Hans-CN").
- * Variant and extension subtags are deliberately excluded: Intl.DisplayNames
- * echoes unknown variants back verbatim ("fr-approved" -> "French (APPROVED)"),
- * which would let a caller inject chosen words into the reviewer prompt (found
- * by the Codex review). Script and Region render only Intl-generated vocabulary.
- */
-const SAFE_LANGUAGE_TAG = /^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|\d{3}))?$/;
+export { resolveLanguageName };
 
 /**
  * Input schema of clonst_review (ZodRawShape for registerTool).
@@ -194,27 +188,26 @@ export interface ReviewErrorResult {
 /** Input error detected before any spawn (no quota consumed). */
 export class InvalidInputError extends Error {}
 
+/** Review guidelines file, read from the project root when project_path is set. */
+const GUIDELINES_FILE = "CLONST.md";
+
 /**
- * Resolves a language code ("fr", "pt-BR") into an English language name
- * ("French", "Brazilian Portuguese") through Intl.DisplayNames. The RAW input
- * value never reaches the reviewer prompt: only this resolved name does. The
- * language[-Script][-Region] shape is validated HERE as well as in the input
- * schema (defense in depth: a future schema change cannot reopen the variant
- * echo hole). Returns undefined for unknown or invalid codes (Intl either
- * echoes the code back or throws): the caller then falls back to the default
- * rule (language of the reviewed content). Exported for tests.
+ * Reads the project's reviewer guidelines (CLONST.md at the project root), if
+ * any. CLAUDE.md guides the writer; CLONST.md guides the reviewer: conventions
+ * this specific project wants checked (compat targets, patterns, red lines).
+ * Absent file = undefined (silent). Present but unreadable = undefined with a
+ * stderr note (never fails a review over a guidelines file).
  */
-export function resolveLanguageName(code: string): string | undefined {
-  if (!SAFE_LANGUAGE_TAG.test(code)) return undefined;
+export function readProjectGuidelines(projectPath: string): string | undefined {
+  const file = path.join(projectPath, GUIDELINES_FILE);
+  if (!existsSync(file)) return undefined;
   try {
-    const resolved = new Intl.DisplayNames(["en"], { type: "language" }).of(code);
-    if (resolved !== undefined && resolved.toLowerCase() !== code.toLowerCase()) {
-      return resolved;
-    }
-  } catch {
-    // structurally invalid tag: fall through to undefined
+    const content = readFileSync(file, "utf-8").trim();
+    return content.length > 0 ? content : undefined;
+  } catch (err) {
+    logStderr(`${GUIDELINES_FILE} present but unreadable (${err instanceof Error ? err.message : String(err)}), review proceeds without it`);
+    return undefined;
   }
-  return undefined;
 }
 
 /**
@@ -444,14 +437,24 @@ export async function runReview(
     }
   }
 
-  // Resolved English name only (never the raw parameter): see resolveLanguageName.
+  // Language priority: explicit parameter > default_language from the config >
+  // none (the reviewer follows the language of the reviewed content). Resolved
+  // English name only ever reaches the prompt (see resolveLanguageName).
+  const languageCode = input.language ?? config.default_language ?? undefined;
   let languageName: string | undefined;
-  if (input.language !== undefined) {
-    languageName = resolveLanguageName(input.language);
+  if (languageCode !== undefined) {
+    languageName = resolveLanguageName(languageCode);
     if (languageName === undefined) {
-      logStderr(`unknown language code "${input.language}", the reviewer will use the content's language`);
+      logStderr(`unknown language code "${languageCode}", the reviewer will use the content's language`);
     }
   }
+
+  // Project reviewer guidelines (CLONST.md): round 1 only, like context - the
+  // reviewer keeps them in session memory across rounds.
+  const guidelines =
+    input.thread_id === undefined && input.project_path !== undefined
+      ? readProjectGuidelines(input.project_path)
+      : undefined;
 
   const prompt =
     input.thread_id !== undefined
@@ -471,6 +474,7 @@ export async function runReview(
           hasProjectAccess: input.project_path !== undefined,
           maxRounds: input.max_rounds,
           language: languageName,
+          reviewGuidelines: guidelines,
         });
 
   logger.log({

@@ -39,8 +39,12 @@ structured review loop with a hard exit criterion: consensus, not politeness.
   cheaper effort) without touching your Codex extension - see Configuration.
 - **Cost transparency.** The final report shows the reviewer model, rounds,
   total duration and tokens consumed.
+- **Your project's own review rules.** Drop a `CLONST.md` at the project root
+  and the reviewer checks your conventions on top of its own standards.
+  CLAUDE.md guides the writer; CLONST.md guides the reviewer.
 - **Reviews in your language.** Critiques come back in the language you work
-  in, while the protocol stays machine-readable English.
+  in (per call, or once for all with `default_language` in the config), while
+  the protocol stays machine-readable English.
 - **Nothing is ever lost.** Every raw reviewer response is saved to disk
   before any parsing.
 - **Cross-platform.** Windows, macOS and Linux, all three covered by the CI.
@@ -114,9 +118,13 @@ Expected: `codex_available: true`, `codex_logged_in: true`.
 
 ## What a review looks like
 
-Reviews happen on their own, but you can also ask explicitly:
+Reviews happen on their own, but you can also steer them:
 
 > Propose a plan for X, then have it reviewed by Clonst until consensus.
+
+> Have this migration reviewed by Clonst, 3 rounds max.
+
+> Ask Clonst for a security-focused review of this auth flow.
 
 You see each revision happen in the conversation, and at consensus Claude ends
 with a short report, for example:
@@ -166,6 +174,7 @@ are optional; invalid values fall back to the default with a warning.
 |---|---|---|
 | `codex_model` | `null` = inherit `~/.codex/config.toml` | Model used for reviews only (e.g. `"gpt-5.5"`). Your Codex VS Code extension keeps its own setting |
 | `codex_reasoning_effort` | `null` = inherit | Reasoning effort for reviews only (e.g. `"medium"`, `"high"`, `"xhigh"`). Lower = faster, cheaper rounds |
+| `default_language` | `null` = language of the reviewed content | Language of the critiques when the caller does not pass one, as a code like `"fr"` or `"pt-BR"` |
 | `suggested_max_rounds` | `5` | Without an explicit limit, Claude checks in with you every N rounds (5, 10, 15...) before continuing. NOT a limit |
 | `timeout_per_call_seconds` | `600` | Timeout of one Codex call (reasoning models take minutes) |
 
@@ -180,6 +189,23 @@ Example, reviews at high effort while your extension stays at xhigh:
 Overrides are passed as root `-c` flags to the codex CLI (contract verified on
 codex 0.142.5 for both `exec` and `resume`); a value unknown to codex fails the
 review with codex's own error message.
+
+### Project review guidelines: CLONST.md
+
+Put a `CLONST.md` at the project root and, whenever a review runs with
+`project_path`, its content is handed to the reviewer as project-specific
+guidelines - your conventions, your red lines, checked on top of the
+reviewer's own standards. Example:
+
+```markdown
+# Review guidelines
+- SQL must stay compatible with BOTH SQLite (dev) and PostgreSQL (prod).
+- Every new route needs rate limiting.
+- LLM results must be matched by ID, never by list position.
+```
+
+Guidelines can only ADD checks: a guideline trying to lower the bar or force
+a verdict is ignored and reported as a risk.
 
 ### Round limits: unlimited by default
 

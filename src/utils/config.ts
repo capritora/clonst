@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { SAFE_LANGUAGE_TAG } from "./language.js";
 import { clonstHome, configPath } from "./paths.js";
 import { logStderr } from "./logger.js";
 
@@ -16,6 +17,13 @@ export interface ClonstConfig {
   codex_model: string | null;
   /** Codex reasoning effort for reviews (e.g. "high", "xhigh"). null = inherit. */
   codex_reasoning_effort: string | null;
+  /**
+   * Default language for the reviewer's free-text output, as a
+   * language[-Script][-Region] code (e.g. "fr", "pt-BR"). Used when the caller
+   * does not pass the language parameter. null = the reviewer follows the
+   * language of the reviewed content.
+   */
+  default_language: string | null;
 }
 
 // NB: no default_reviewer field as long as Codex is the only implemented
@@ -25,6 +33,7 @@ export const DEFAULT_CONFIG: ClonstConfig = {
   timeout_per_call_seconds: 600,
   codex_model: null,
   codex_reasoning_effort: null,
+  default_language: null,
 };
 
 // These values become CLI arguments (-c model=...): same whitelist as
@@ -68,6 +77,17 @@ export function normalizeConfig(parsed: Record<string, unknown>): ClonstConfig {
 
   config.codex_model = normalizeOverride(parsed, "codex_model");
   config.codex_reasoning_effort = normalizeOverride(parsed, "codex_reasoning_effort");
+
+  const language = parsed["default_language"];
+  if (language !== undefined && language !== null) {
+    // Same shape as the language parameter (and re-validated at resolution):
+    // language[-Script][-Region] only, so the value can never carry words.
+    if (typeof language === "string" && SAFE_LANGUAGE_TAG.test(language)) {
+      config.default_language = language;
+    } else {
+      logStderr(`config: invalid default_language (${JSON.stringify(language)}), the reviewer will use the content's language`);
+    }
+  }
 
   return config;
 }
