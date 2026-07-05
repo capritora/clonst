@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         # Node 20 is EOL (2026-04-30) and its test runner does not expand the
         # test glob (support landed in Node 21): >=22 is the supported floor.
         node: [22, 24]

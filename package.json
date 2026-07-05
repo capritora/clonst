@@ -24,12 +24,20 @@
   },
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
+    "claude",
     "claude-code",
     "codex",
+    "openai",
+    "anthropic",
+    "chatgpt",
     "code-review",
+    "ai-code-review",
+    "adversarial-review",
+    "second-opinion",
     "llm",
-    "adversarial-review"
+    "developer-tools"
   ],
   "author": "Christopher <christopher@capritora.com>",
   "license": "MIT",
