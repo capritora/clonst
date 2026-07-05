@@ -1,0 +1,44 @@
+{
+  "name": "clonst",
+  "version": "1.0.0",
+  "description": "MCP server that lets Claude Code get its plans and code adversarially reviewed by Codex, in a ping-pong loop until consensus",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "clonst": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "!dist/tests"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm test && npm run smoke",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "smoke": "node scripts/smoke-mcp.mjs",
+    "test": "npm run build && node --test \"dist/tests/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude-code",
+    "codex",
+    "code-review",
+    "llm",
+    "adversarial-review"
+  ],
+  "author": "Christopher <christopher@capritora.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3"
+  }
+}

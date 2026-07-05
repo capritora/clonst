@@ -1,0 +1,602 @@
+import { randomUUID } from "node:crypto";
+import { existsSync, statSync } from "node:fs";
+import path from "node:path";
+import { z } from "zod";
+import { isConsensus, parseReviewerResponse } from "../core/consensus.js";
+import { buildFirstRoundPrompt, buildFollowupRoundPrompt } from "../core/formatter.js";
+import { ProviderError, type ReviewerProvider } from "../providers/base.js";
+import type { ClonstConfig } from "../utils/config.js";
+import { SessionLogger, logStderr } from "../utils/logger.js";
+
+/**
+ * language[-Script][-Region] ONLY (e.g. "fr", "pt-BR", "zh-Hans", "zh-Hans-CN").
+ * Variant and extension subtags are deliberately excluded: Intl.DisplayNames
+ * echoes unknown variants back verbatim ("fr-approved" -> "French (APPROVED)"),
+ * which would let a caller inject chosen words into the reviewer prompt (found
+ * by the Codex review). Script and Region render only Intl-generated vocabulary.
+ */
+const SAFE_LANGUAGE_TAG = /^[A-Za-z]{2,3}(-[A-Za-z]{4})?(-([A-Za-z]{2}|\d{3}))?$/;
+
+/**
+ * Input schema of clonst_review (ZodRawShape for registerTool).
+ * The descriptions address the calling LLM: they drive the revision loop.
+ */
+export const reviewInputShape = {
+  content: z
+    .string()
+    .min(1)
+    .describe(
+      "The plan, code or proposal to review, COMPLETE (on later rounds: the full revised version, not a diff)."
+    ),
+  context: z
+    .string()
+    .optional()
+    .describe(
+      "Round 1 only: context for the reviewer (project goal, constraints, decisions already made with the user). Ignored when thread_id is provided (the reviewer already holds the context in session memory)."
+    ),
+  thread_id: z
+    .string()
+    // Aligned with the SessionLogger's isValidSessionId: "." and ".." would pass a
+    // plain whitelist regex, then fail later as an opaque "internal" error.
+    .regex(/^(?!\.+$)[A-Za-z0-9._-]+$/)
+    .optional()
+    .describe(
+      "Later rounds: the identifier returned by the previous call. Resumes the reviewer's session, so it remembers its critiques. Omit on round 1."
+    ),
+  round: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe(
+      "Round number (default: 1 without thread_id, 2 with). Hard safety cap: 50 rounds (a ping-pong reaching that point is a runaway, not a review)."
+    ),
+  max_rounds: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe(
+      "Round limit set by the user for THIS ping-pong (the reviewer is informed and calibrates its demands). Omit by default: no limit, the loop continues until consensus. Pass the same value on every round."
+    ),
+  project_path: z
+    .string()
+    .optional()
+    .describe(
+      "Absolute path of the project: the reviewer runs there and can read the real files. Reserve it for reviews that must verify existing APIs/contracts/files: by default the content parameter is enough, and the ENTIRE project (including .env and secrets) becomes readable by the reviewer when this parameter is set."
+    ),
+  language: z
+    .string()
+    .regex(SAFE_LANGUAGE_TAG)
+    .optional()
+    .describe(
+      'Language code for the reviewer\'s free-text output: language[-Script][-Region] only (e.g. "fr", "pt-BR", "zh-Hans"). Pass the language of your conversation with the user so critiques read naturally to them. Omit to let the reviewer use the language of the reviewed content.'
+    ),
+  review_focus: z
+    .string()
+    .optional()
+    .describe("Round 1: review focus ('bugs', 'architecture', 'performance', 'security', 'all'). Default: all."),
+  changes_made: z
+    .string()
+    .optional()
+    .describe("Later rounds: summary of the changes made in response to the previous critiques."),
+  changes_rejected: z
+    .string()
+    .optional()
+    .describe("Later rounds: rejected critiques, each with its justification (the reviewer will evaluate them)."),
+};
+
+const reviewInputObject = z.object(reviewInputShape);
+export type ReviewInput = z.infer<typeof reviewInputObject>;
+
+/**
+ * MCP output schema (outputSchema): the calling LLM receives these fields as
+ * typed structuredContent, no text re-parsing needed.
+ */
+export const reviewOutputShape = {
+  status: z.literal("ok"),
+  round: z.number().int(),
+  verdict: z.enum(["APPROVED", "CHANGES_NEEDED"]),
+  consensus: z.boolean(),
+  score: z.number().nullable(),
+  critique: z.string(),
+  required_changes: z.array(z.string()),
+  suggestions: z.array(z.string()),
+  risks_identified: z.array(z.string()),
+  reviewer_feedback: z.string().nullable(),
+  parsed_from_fallback: z.boolean(),
+  thread_id: z.string().nullable(),
+  duration_seconds: z.number(),
+  total_duration_seconds: z.number(),
+  usage: z.record(z.string(), z.number()).nullable(),
+  total_usage: z.record(z.string(), z.number()).nullable(),
+  reviewer_model: z.string().nullable(),
+  reviewer_reasoning_effort: z.string().nullable(),
+  session_log: z.string(),
+  session_migrated: z.boolean().nullable(),
+  next_action: z.string(),
+  next_action_kind: z.enum(["done", "arbitrate", "checkpoint", "continue"]),
+  should_reinvoke: z.boolean(),
+  next_round: z.number().int().nullable(),
+  requires_user_input: z.boolean(),
+};
+
+export interface ReviewResult {
+  status: "ok";
+  round: number;
+  verdict: "APPROVED" | "CHANGES_NEEDED";
+  /** true only on a proven APPROVED (clean JSON, zero required_changes). */
+  consensus: boolean;
+  score: number | null;
+  critique: string;
+  required_changes: string[];
+  suggestions: string[];
+  risks_identified: string[];
+  /** Reviewer feedback about the quality of the prompt/context it was given. */
+  reviewer_feedback: string | null;
+  /** true if the verdict comes from a recovery path (degraded JSON): less reliable. */
+  parsed_from_fallback: boolean;
+  /** Pass back unchanged on the next call so the reviewer keeps its memory. */
+  thread_id: string | null;
+  duration_seconds: number;
+  /**
+   * Cumulative duration of ALL rounds of this ping-pong (server-side session
+   * state): the time cost of the full review, shown to the user at consensus.
+   */
+  total_duration_seconds: number;
+  usage: Record<string, number> | null;
+  /** Cumulative token usage across all rounds (summed per key). */
+  total_usage: Record<string, number> | null;
+  /**
+   * Reviewer model, best-effort for display: the Clonst override if set,
+   * otherwise the default read from the CLI's config, otherwise null (unknown).
+   */
+  reviewer_model: string | null;
+  /** Reviewer reasoning effort (same best-effort resolution). */
+  reviewer_reasoning_effort: string | null;
+  /** Path of the session logs (JSONL + raw responses) for diagnostics. */
+  session_log: string;
+  /**
+   * Round 1: true if the logs were migrated under the thread_id, false otherwise
+   * (session_log then stays under the provisional identifier). Later rounds:
+   * null (not applicable), EXCEPT when the reviewer re-emitted a thread_id
+   * different from the resumed one (thread_id_mismatch anomaly): the logs are
+   * then migrated to the new thread_id (true/false) to follow the real session.
+   */
+  session_migrated: boolean | null;
+  /** Instruction for the calling LLM: what to do now (text version). */
+  next_action: string;
+  /**
+   * Typed version of next_action:
+   * done = consensus, present the result; arbitrate = explicit limit reached,
+   * let the user decide; checkpoint = consult the user before continuing
+   * (periodic check-in, or resume impossible because no thread_id);
+   * continue = apply the critiques and re-invoke.
+   */
+  next_action_kind: "done" | "arbitrate" | "checkpoint" | "continue";
+  /** true if the caller may re-invoke clonst_review without consulting the user. */
+  should_reinvoke: boolean;
+  /** Round number to pass on re-invocation (null if no re-invocation is possible). */
+  next_round: number | null;
+  /** true if a user decision is required before anything else. */
+  requires_user_input: boolean;
+}
+
+export interface ReviewErrorResult {
+  status: "error";
+  kind: string;
+  message: string;
+  hint?: string;
+}
+
+/** Input error detected before any spawn (no quota consumed). */
+export class InvalidInputError extends Error {}
+
+/**
+ * Resolves a language code ("fr", "pt-BR") into an English language name
+ * ("French", "Brazilian Portuguese") through Intl.DisplayNames. The RAW input
+ * value never reaches the reviewer prompt: only this resolved name does. The
+ * language[-Script][-Region] shape is validated HERE as well as in the input
+ * schema (defense in depth: a future schema change cannot reopen the variant
+ * echo hole). Returns undefined for unknown or invalid codes (Intl either
+ * echoes the code back or throws): the caller then falls back to the default
+ * rule (language of the reviewed content). Exported for tests.
+ */
+export function resolveLanguageName(code: string): string | undefined {
+  if (!SAFE_LANGUAGE_TAG.test(code)) return undefined;
+  try {
+    const resolved = new Intl.DisplayNames(["en"], { type: "language" }).of(code);
+    if (resolved !== undefined && resolved.toLowerCase() !== code.toLowerCase()) {
+      return resolved;
+    }
+  } catch {
+    // structurally invalid tag: fall through to undefined
+  }
+  return undefined;
+}
+
+/**
+ * File (in the session's raw directory) holding the last round's verdict and
+ * the ping-pong cumulative totals (duration, token usage).
+ */
+const LAST_VERDICT_FILE = "last_verdict.json";
+
+/** Sums two token usage reports per key. null on both sides = null. */
+function mergeUsage(
+  previous: Record<string, number> | null,
+  current: Record<string, number> | null
+): Record<string, number> | null {
+  if (previous === null) return current;
+  if (current === null) return previous;
+  const merged: Record<string, number> = { ...previous };
+  for (const [key, value] of Object.entries(current)) {
+    merged[key] = (merged[key] ?? 0) + value;
+  }
+  return merged;
+}
+
+const SUGGESTIONS_POLICY =
+  `For suggestions and risks_identified: ANALYZE them and decide YOURSELF whether to ` +
+  `apply or discard each one, based on your knowledge of the project and the decisions ` +
+  `already made - documenting every decision. Only involve the user when a suggestion ` +
+  `implies a genuine product/business choice, a decision that belongs to them, or ` +
+  `information you do not have.`;
+
+/** Number agreement: "1 round", "3 rounds". */
+function roundsLabel(n: number): string {
+  return `${n} round${n > 1 ? "s" : ""}`;
+}
+
+interface NextAction {
+  text: string;
+  kind: "done" | "arbitrate" | "checkpoint" | "continue";
+  should_reinvoke: boolean;
+  next_round: number | null;
+  requires_user_input: boolean;
+}
+
+function buildNextAction(
+  consensus: boolean,
+  threadId: string | null,
+  round: number,
+  explicitMaxRounds: number | undefined,
+  checkpointRounds: number
+): NextAction {
+  if (consensus) {
+    return {
+      kind: "done",
+      should_reinvoke: false,
+      next_round: null,
+      requires_user_input: false,
+      text:
+        `Consensus reached at round ${round}. ${SUGGESTIONS_POLICY} Then ALWAYS end ` +
+        `with a brief review report to the user (2-3 sentences maximum): the reviewer ` +
+        `used (reviewer_model / reviewer_reasoning_effort, "unknown" if null), the ` +
+        `number of rounds, the total review duration (total_duration_seconds field, ` +
+        `converted to readable minutes) with the tokens consumed (total_usage, ` +
+        `briefly), what the review concretely brought (bugs avoided, changes the ` +
+        `reviewer demanded, critiques you rejected), and your decisions on the ` +
+        `suggestions. Do NOT walk through the rounds one by one in this final report, ` +
+        `unless the user asks for it.`,
+    };
+  }
+  // Explicit limit set by the user and reached: arbitration, no re-invocation.
+  if (explicitMaxRounds !== undefined && round >= explicitMaxRounds) {
+    return {
+      kind: "arbitrate",
+      should_reinvoke: false,
+      next_round: null,
+      requires_user_input: true,
+      text:
+        `No consensus at round ${round}: the limit of ${roundsLabel(explicitMaxRounds)} set for this ` +
+        `review is reached. Do NOT re-invoke clonst_review: present the state of the disagreement to ` +
+        `the user (the remaining required_changes and your rejection justifications) and ask them how ` +
+        `to settle it: accept the current version, follow the reviewer's position, or start a new review.`,
+    };
+  }
+  // Resume impossible (the reviewer emitted no session identifier): this round's
+  // critique remains valid, but re-invoking means starting over (new session,
+  // reviewer memory lost, context to resend, quota spent again). That decision
+  // belongs to the user: text AND structured fields must say the same thing.
+  if (threadId === null) {
+    return {
+      kind: "checkpoint",
+      should_reinvoke: false,
+      next_round: null,
+      requires_user_input: true,
+      text:
+        `No consensus, and the reviewer emitted no session identifier: resuming is ` +
+        `impossible (anomaly; this round's critique remains valid). Do NOT re-invoke ` +
+        `clonst_review without consulting the user: present the critique and ask whether ` +
+        `they want to restart a NEW review (round 1, no thread_id, context resent via ` +
+        `context - the reviewer starts over without memory of its critiques) or continue ` +
+        `without review. ` +
+        SUGGESTIONS_POLICY,
+    };
+  }
+  const resumeInstruction = `re-invoke clonst_review with: content = the COMPLETE revised version (the full document, never a diff or a summary), thread_id="${threadId}", round=${round + 1}, changes_made (summary of your changes) and changes_rejected (rejected critiques with justification).`;
+  // Without an explicit limit: PERIODIC check-in (rounds 5, 10, 15... for a
+  // checkpoint of 5), not permanent: between two multiples the loop resumes
+  // normally. The loop never stops on its own, but it also never runs
+  // indefinitely without the user being consulted.
+  if (explicitMaxRounds === undefined && checkpointRounds > 0 && round % checkpointRounds === 0) {
+    return {
+      kind: "checkpoint",
+      should_reinvoke: false,
+      next_round: round + 1,
+      requires_user_input: true,
+      text:
+        `No consensus after ${roundsLabel(round)}. No limit is set for this review, but make a ` +
+        `CHECK-IN before continuing: present the state of the disagreement to the user and ask ` +
+        `whether they want to continue the ping-pong, settle it themselves, or accept the current ` +
+        `version. If they continue: apply the required_changes then ${resumeInstruction} ` +
+        SUGGESTIONS_POLICY,
+    };
+  }
+  return {
+    kind: "continue",
+    should_reinvoke: true,
+    next_round: round + 1,
+    requires_user_input: false,
+    text:
+      `No consensus. Apply every item in required_changes (or prepare a rejection ` +
+      `justification when a point is factually wrong or contradicts the user's decisions), then ${resumeInstruction} ` +
+      SUGGESTIONS_POLICY,
+  };
+}
+
+/**
+ * Runs one review round. The provider is injected (testability); in production
+ * it is CodexProvider. Throws ProviderError or InvalidInputError: the MCP
+ * handler formats them through formatReviewError.
+ */
+export async function runReview(
+  input: ReviewInput,
+  provider: ReviewerProvider,
+  config: ClonstConfig
+): Promise<ReviewResult> {
+  // Every input validation happens BEFORE any spawn: a bad call must never
+  // consume quota.
+  if (input.project_path !== undefined) {
+    if (!path.isAbsolute(input.project_path)) {
+      throw new InvalidInputError(
+        `project_path must be an ABSOLUTE path: "${input.project_path}" would resolve against the MCP server's cwd, not your conversation's.`
+      );
+    }
+    if (!existsSync(input.project_path) || !statSync(input.project_path).isDirectory()) {
+      throw new InvalidInputError(
+        `project_path is not an existing directory: "${input.project_path}". Provide the project root directory or omit the parameter.`
+      );
+    }
+  }
+  if (input.thread_id === undefined && input.round !== undefined && input.round > 1) {
+    throw new InvalidInputError(
+      `round=${input.round} without thread_id: the reviewer's session cannot be resumed. Provide the thread_id returned by the previous round, or omit round to start a new review.`
+    );
+  }
+  if (input.thread_id !== undefined && input.round !== undefined && input.round < 2) {
+    throw new InvalidInputError(
+      `thread_id provided with round=${input.round}: a thread_id implies resuming an existing session (round >= 2). Omit round (default: 2) or omit thread_id for a round 1.`
+    );
+  }
+  // The effective round is computed BEFORE the limit validation: without this,
+  // an implicit call like { thread_id, max_rounds: 1 } (round inferred as 2)
+  // would pass validation and spawn anyway (found by the Codex review).
+  const round = input.round ?? (input.thread_id !== undefined ? 2 : 1);
+  if (input.max_rounds !== undefined && round > input.max_rounds) {
+    throw new InvalidInputError(
+      `effective round ${round} exceeds max_rounds=${input.max_rounds}: the limit set for this review is already reached. Present the disagreement to the user instead of re-invoking.`
+    );
+  }
+  // Later rounds: the logs live under the thread_id (session continuity);
+  // round 1: generated identifier, the thread_id does not exist yet.
+  const logger = new SessionLogger(input.thread_id ?? randomUUID());
+
+  // Server-side recall of the previous round's required_changes: we never depend
+  // solely on the reviewer's session memory (it can drift on long ping-pongs).
+  // Persisted in the session's raw directory on every round.
+  let previousRequiredChanges: string[] | undefined;
+  let previousTotalSeconds = 0;
+  let previousTotalUsage: Record<string, number> | null = null;
+  if (input.thread_id !== undefined) {
+    const raw = logger.readRaw(LAST_VERDICT_FILE);
+    if (raw !== null) {
+      try {
+        const parsed = JSON.parse(raw) as {
+          required_changes?: unknown;
+          cumulative_duration_seconds?: unknown;
+          cumulative_usage?: unknown;
+        };
+        if (Array.isArray(parsed.required_changes)) {
+          previousRequiredChanges = parsed.required_changes.filter(
+            (item): item is string => typeof item === "string"
+          );
+        }
+        // Ping-pong cumulative totals: invalid values are ignored (the total then
+        // restarts from the current round, never a crash for a degraded state file).
+        if (
+          typeof parsed.cumulative_duration_seconds === "number" &&
+          Number.isFinite(parsed.cumulative_duration_seconds) &&
+          parsed.cumulative_duration_seconds >= 0
+        ) {
+          previousTotalSeconds = parsed.cumulative_duration_seconds;
+        }
+        if (
+          typeof parsed.cumulative_usage === "object" &&
+          parsed.cumulative_usage !== null &&
+          !Array.isArray(parsed.cumulative_usage)
+        ) {
+          // All-or-nothing: a single invalid value (non-number, non-finite,
+          // negative) disqualifies the whole object and the total restarts from
+          // the current round. A negative token count is as invalid as a
+          // negative duration (Codex review).
+          const entries = Object.entries(parsed.cumulative_usage);
+          const allValid =
+            entries.length > 0 &&
+            entries.every(([, v]) => typeof v === "number" && Number.isFinite(v) && v >= 0);
+          if (allValid) previousTotalUsage = Object.fromEntries(entries) as Record<string, number>;
+        }
+      } catch {
+        logStderr(`${LAST_VERDICT_FILE} unreadable, previous required_changes recall and totals omitted`);
+      }
+    }
+  }
+
+  // Resolved English name only (never the raw parameter): see resolveLanguageName.
+  let languageName: string | undefined;
+  if (input.language !== undefined) {
+    languageName = resolveLanguageName(input.language);
+    if (languageName === undefined) {
+      logStderr(`unknown language code "${input.language}", the reviewer will use the content's language`);
+    }
+  }
+
+  const prompt =
+    input.thread_id !== undefined
+      ? buildFollowupRoundPrompt({
+          round,
+          maxRounds: input.max_rounds,
+          revisedContent: input.content,
+          changesMade: input.changes_made,
+          changesRejected: input.changes_rejected,
+          previousRequiredChanges,
+          language: languageName,
+        })
+      : buildFirstRoundPrompt({
+          content: input.content,
+          context: input.context,
+          reviewFocus: input.review_focus,
+          hasProjectAccess: input.project_path !== undefined,
+          maxRounds: input.max_rounds,
+          language: languageName,
+        });
+
+  logger.log({
+    event: "review_round_start",
+    round,
+    reviewer: provider.name,
+    resumed: input.thread_id !== undefined,
+    project_path: input.project_path ?? null,
+    content_chars: input.content.length,
+    // Clonst config overrides (null = the reviewer CLI's own defaults): traced so
+    // a review can be attributed to its real model/effort during diagnostics.
+    model_override: config.codex_model,
+    reasoning_effort_override: config.codex_reasoning_effort,
+  });
+
+  const invocation = await provider.invoke({
+    prompt,
+    cwd: input.project_path,
+    threadId: input.thread_id,
+    timeoutMs: config.timeout_per_call_seconds * 1000,
+    tag: `round_${round}`,
+    logger,
+    model: config.codex_model ?? undefined,
+    reasoningEffort: config.codex_reasoning_effort ?? undefined,
+  });
+
+  // Log continuity: round 1 started under a provisional identifier; as soon as
+  // the reviewer's thread_id is known, the session is migrated onto it so ALL
+  // rounds of one ping-pong live in the same JSONL file.
+  let sessionMigrated: boolean | null = null;
+  if (input.thread_id === undefined) {
+    sessionMigrated = invocation.threadId !== null && logger.migrateTo(invocation.threadId);
+  } else if (invocation.threadId !== null && invocation.threadId !== input.thread_id) {
+    // thread_id_mismatch anomaly (already logged by the provider): the caller
+    // will pass the NEW thread_id on the next round. The logs and
+    // last_verdict.json migrate onto it, otherwise session continuity and the
+    // server-side recall would be lost.
+    sessionMigrated = logger.migrateTo(invocation.threadId);
+  }
+
+  const verdict = parseReviewerResponse(invocation.text);
+  const consensus = isConsensus(verdict);
+
+  const durationSeconds = Math.round(invocation.durationMs / 100) / 10;
+  const totalDurationSeconds = Math.round((previousTotalSeconds + durationSeconds) * 10) / 10;
+  const totalUsage = mergeUsage(previousTotalUsage, invocation.usage);
+
+  // Persisted AFTER any migration: the file lives in the final session directory
+  // and is re-read on the next round for the server-side recall and the totals.
+  logger.saveRaw(
+    LAST_VERDICT_FILE,
+    JSON.stringify(
+      {
+        round,
+        verdict: verdict.verdict,
+        required_changes: verdict.required_changes,
+        cumulative_duration_seconds: totalDurationSeconds,
+        cumulative_usage: totalUsage,
+      },
+      null,
+      2
+    )
+  );
+
+  logger.log({
+    event: "review_round_done",
+    round,
+    verdict: verdict.verdict,
+    consensus,
+    score: verdict.score,
+    required_changes_count: verdict.required_changes.length,
+    parsed_from_fallback: verdict.parsed_from_fallback,
+  });
+
+  const nextAction = buildNextAction(
+    consensus,
+    invocation.threadId,
+    round,
+    input.max_rounds,
+    config.suggested_max_rounds
+  );
+
+  return {
+    status: "ok",
+    round,
+    verdict: verdict.verdict,
+    consensus,
+    score: verdict.score,
+    critique: verdict.critique || verdict.raw_text,
+    required_changes: verdict.required_changes,
+    suggestions: verdict.suggestions,
+    risks_identified: verdict.risks_identified,
+    reviewer_feedback: verdict.feedback,
+    parsed_from_fallback: verdict.parsed_from_fallback,
+    thread_id: invocation.threadId,
+    duration_seconds: durationSeconds,
+    total_duration_seconds: totalDurationSeconds,
+    usage: invocation.usage,
+    total_usage: totalUsage,
+    reviewer_model: invocation.model,
+    reviewer_reasoning_effort: invocation.reasoningEffort,
+    session_log: logger.jsonlPath,
+    session_migrated: sessionMigrated,
+    next_action: nextAction.text,
+    next_action_kind: nextAction.kind,
+    should_reinvoke: nextAction.should_reinvoke,
+    next_round: nextAction.next_round,
+    requires_user_input: nextAction.requires_user_input,
+  };
+}
+
+export function formatReviewError(err: unknown): ReviewErrorResult {
+  if (err instanceof ProviderError) {
+    return {
+      status: "error",
+      kind: err.kind,
+      message: err.message,
+      ...(err.hint !== undefined ? { hint: err.hint } : {}),
+    };
+  }
+  if (err instanceof InvalidInputError) {
+    return { status: "error", kind: "invalid_input", message: err.message };
+  }
+  return {
+    status: "error",
+    kind: "internal",
+    message: err instanceof Error ? (err.stack ?? err.message) : String(err),
+  };
+}
