@@ -3,8 +3,11 @@ export interface FirstRoundPromptInput {
   content: string;
   /** Context provided by the caller (goal, constraints). */
   context?: string;
-  /** Review focus: "bugs", "architecture", "performance", "security", "all". */
-  reviewFocus?: string;
+  /**
+   * Review focus. Closed union (mirrors the zod enum): the value is
+   * interpolated into the prompt, a free string would be an injection surface.
+   */
+  reviewFocus?: "bugs" | "architecture" | "performance" | "security" | "all";
   /** true if the CLI is spawned in the project directory (read access to files). */
   hasProjectAccess: boolean;
   /**

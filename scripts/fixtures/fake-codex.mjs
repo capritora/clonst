@@ -1,5 +1,5 @@
 // Test fixture: mimics the `codex exec --json` contract observed during the probes
-// (review/step_1.md, codex-cli 0.142.5) without consuming quota.
+// (pinned by scripts/probe-codex.ps1, codex-cli 0.142.5) without consuming quota.
 // - New session: fixed thread_id.
 // - Resume (`exec resume <id>`): re-emits the resumed thread_id, like the real CLI.
 // - Writes the last message to the --output-last-message file.

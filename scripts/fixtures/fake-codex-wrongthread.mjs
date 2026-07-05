@@ -6,7 +6,7 @@ const args = process.argv.slice(2);
 process.stdin.resume();
 process.stdin.on("data", () => {});
 process.stdin.on("end", () => {
-  const reply = JSON.stringify({ verdict: "APPROVED", note: "session divergente" });
+  const reply = JSON.stringify({ verdict: "APPROVED", note: "divergent session" });
   const emit = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
   emit({ type: "thread.started", thread_id: "99999999-8888-7777-6666-555555555555" });
   emit({ type: "item.completed", item: { id: "item_0", type: "agent_message", text: reply } });

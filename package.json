@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "npm test && npm run smoke",
+    "prepublishOnly": "npm test && npm run smoke && node scripts/check-npm-pack.mjs",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "smoke": "node scripts/smoke-mcp.mjs",

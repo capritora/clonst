@@ -69,9 +69,11 @@ export const reviewInputShape = {
       'Language code for the reviewer\'s free-text output: language[-Script][-Region] only (e.g. "fr", "pt-BR", "zh-Hans"). Pass the language of your conversation with the user so critiques read naturally to them. Omit to let the reviewer use the language of the reviewed content.'
     ),
   review_focus: z
-    .string()
+    // Closed enum: this value is interpolated into the reviewer prompt, so a
+    // free string would be an injection surface (same rule as language).
+    .enum(["bugs", "architecture", "performance", "security", "all"])
     .optional()
-    .describe("Round 1: review focus ('bugs', 'architecture', 'performance', 'security', 'all'). Default: all."),
+    .describe("Round 1: review focus. Default: all."),
   changes_made: z
     .string()
     .optional()

@@ -82,15 +82,17 @@ You ── conversation ── Claude (reviser, keeps the conversation context)
 
 The loop lives on Claude's side: it submits, Codex critiques, Claude revises
 in the conversation (in front of you), resubmits with the returned
-`thread_id`, until `consensus: true`. The server is stateless between calls;
-Codex sessions persist on disk on the CLI side.
+`thread_id`, until `consensus: true`. The loop is driven through the caller (the
+`thread_id` travels with each call), while the server keeps per-session
+records on disk: full logs, the previous round's verdict for exact recall,
+and the running duration/token totals. Codex sessions persist on the CLI side.
 
 ## Quick start
 
 **Requirements**:
 
 - [Claude Code](https://claude.com/claude-code) - the terminal CLI or the
-  VS Code / JetBrains extension, both work identically
+  VS Code / JetBrains extensions, which share the same MCP configuration
 - Node.js 22+
 - The Codex CLI, logged in with a ChatGPT plan:
 
@@ -167,8 +169,9 @@ duration and token usage, `reviewer_model` / `reviewer_reasoning_effort`
 
 ## Configuration
 
-`~/.clonst/config.json`, created on first use, re-read on every call. All keys
-are optional; invalid values fall back to the default with a warning.
+Optional file, absent by default: create `~/.clonst/config.json` yourself to
+change any key. It is re-read on every call; invalid values fall back to the
+default with a warning.
 
 | Key | Default | What it does |
 |---|---|---|

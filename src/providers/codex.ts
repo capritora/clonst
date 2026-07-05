@@ -11,8 +11,8 @@ import {
 } from "./base.js";
 
 /**
- * JSONL contract of `codex exec --json`, pinned by the step 1 probes
- * (review/step_1.md, codex-cli 0.142.5):
+ * JSONL contract of `codex exec --json`, pinned by the scripts/probe-codex*.ps1
+ * probes (codex-cli 0.142.5):
  *   {"type":"thread.started","thread_id":"<uuid>"}
  *   {"type":"turn.started"}
  *   {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"<response>"}}

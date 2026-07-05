@@ -30,7 +30,8 @@ const STRIPPED_ENV_PREFIXES = ["CLAUDECODE", "CLAUDE_CODE_"];
 export function cleanEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(base)) {
-    if (STRIPPED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+    // Case-insensitive: Windows environment variable names are case-insensitive
+    if (STRIPPED_ENV_PREFIXES.some((prefix) => key.toUpperCase().startsWith(prefix))) continue;
     env[key] = value;
   }
   return env;

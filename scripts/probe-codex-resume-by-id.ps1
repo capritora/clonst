@@ -1,4 +1,4 @@
-# Probe required by the Codex review (step_1_codex.md): prove that the thread_id
+# Probe pinning the resume contract: prove that the thread_id
 # captured in the thread.started event can be reused via `codex exec resume <id>`
 # (not just --last, which depends on the cwd and local state).
 # Run AFTER probe-codex.ps1 (extracts the thread_id from its JSONL output).

@@ -118,7 +118,7 @@ test("isConsensus: APPROVED with leftover required_changes = NO consensus (contr
 });
 
 test("broken JSON with APPROVED + visible but lost required_changes: NEVER consensus", () => {
-  // Scenario found by Codex (step_4_codex.md round 1): the regex fallback recovers
+  // Scenario found by an early adversarial review: the regex fallback recovers
   // APPROVED but the required_changes are unrecoverable. Consensus would declare
   // approved a content whose raw text visibly lists required changes.
   const broken = '{"verdict":"APPROVED","required_changes":["fix X"';

@@ -26,6 +26,17 @@ test("cleanEnv strips the Claude Code session variables and keeps the rest", () 
   assert.equal(env.CLAUDE_CODE_ENTRYPOINT, undefined);
 });
 
+test("cleanEnv is case-insensitive (Windows environment variable names are)", () => {
+  const env = cleanEnv({
+    ClaudeCode: "1",
+    claude_code_entrypoint: "cli",
+    NOT_CLAUDE: "keep",
+  });
+  assert.equal(env.ClaudeCode, undefined);
+  assert.equal(env.claude_code_entrypoint, undefined);
+  assert.equal(env.NOT_CLAUDE, "keep");
+});
+
 test("assertSafeArg accepts a UUID and rejects shell metacharacters", () => {
   const uuid = "019f2d71-02e2-7ae1-911d-30452a0f901e";
   assert.equal(assertSafeArg(uuid, "thread_id"), uuid);
