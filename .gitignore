@@ -1,13 +1,10 @@
 node_modules/
 dist/
 *.log
-review/probe-output/
 .env
 
-# Local-only files (personal notes, machine-specific registration, dev history)
+# Local MCP registration (copy .mcp.json.example and keep yours out of git)
 .mcp.json
-MODE-EMPLOI.markdown
-TODO.md
-review/
-.codegraph/
-git-history-backup.bundle
+
+# Written by the scripts/probe-*.ps1 contract probes
+review/probe-output/
