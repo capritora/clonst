@@ -9,7 +9,7 @@ import { logsDir } from "./utils/paths.js";
 import { spawnCLI } from "./utils/process.js";
 
 export const SERVER_NAME = "clonst";
-export const SERVER_VERSION = "1.0.0";
+export const SERVER_VERSION = "1.1.0";
 
 // IMPORTANT: with the stdio transport, stdout is reserved for the MCP protocol.
 // All human-readable logging goes to stderr (logStderr), never console.log.
