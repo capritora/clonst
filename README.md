@@ -33,6 +33,10 @@ structured review loop with a hard exit criterion: consensus, not politeness.
   reviewer.
 - **Your ChatGPT subscription, no API keys.** Reviews go through the official
   `codex` CLI and its existing login.
+- **Pick your reviewer.** By default, reviews use the model and reasoning
+  effort your codex CLI is already configured with. One line in
+  `~/.clonst/config.json` gives reviews their own setting (e.g. a faster,
+  cheaper effort) without touching your Codex extension - see Configuration.
 - **Cost transparency.** The final report shows the reviewer model, rounds,
   total duration and tokens consumed.
 - **Reviews in your language.** Critiques come back in the language you work
