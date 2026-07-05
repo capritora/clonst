@@ -83,7 +83,12 @@ Codex sessions persist on disk on the CLI side.
 
 ## Quick start
 
-**Requirements**: Node.js 22+, and the Codex CLI logged in with a ChatGPT plan:
+**Requirements**:
+
+- [Claude Code](https://claude.com/claude-code) - the terminal CLI or the
+  VS Code / JetBrains extension, both work identically
+- Node.js 22+
+- The Codex CLI, logged in with a ChatGPT plan:
 
 ```
 npm install -g @openai/codex
