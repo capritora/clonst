@@ -35,7 +35,11 @@ test("assertSafeArg accepts a UUID and rejects shell metacharacters", () => {
 });
 
 test("quoteArg leaves simple arguments untouched (flags, paths without spaces)", () => {
-  for (const arg of ["--json", "-", "codex", "C:\\Users\\Chris\\file.txt", "a/b/c.json", "key=value"]) {
+  // Backslash paths are only "simple" on Windows: the POSIX whitelist excludes
+  // the backslash, so such an argument is legitimately quoted there.
+  const args = ["--json", "-", "codex", "a/b/c.json", "key=value"];
+  if (isWindows) args.push("C:\\Users\\Chris\\file.txt");
+  for (const arg of args) {
     assert.equal(quoteArg(arg), arg);
   }
 });
