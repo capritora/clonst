@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { isConsensus, parseReviewerResponse } from "../core/consensus.js";
@@ -190,17 +190,40 @@ export class InvalidInputError extends Error {}
 
 /** Review guidelines file, read from the project root when project_path is set. */
 const GUIDELINES_FILE = "CLONST.md";
+/**
+ * Above this size the file is IGNORED entirely (with a stderr note), never
+ * truncated (project rule). 64 KB is far beyond any real guidelines file and
+ * caps the prompt-inflation attack from a hostile repo.
+ */
+const GUIDELINES_MAX_BYTES = 65_536;
 
 /**
  * Reads the project's reviewer guidelines (CLONST.md at the project root), if
  * any. CLAUDE.md guides the writer; CLONST.md guides the reviewer: conventions
  * this specific project wants checked (compat targets, patterns, red lines).
- * Absent file = undefined (silent). Present but unreadable = undefined with a
- * stderr note (never fails a review over a guidelines file).
+ *
+ * Hardened against a hostile repo (Codex review): lstat (symlinks NOT
+ * followed - the server must never read outside the project on the repo's
+ * behalf), regular files only, size-capped. Absent file = undefined (silent);
+ * any rejected or unreadable file = undefined with a stderr note (a
+ * guidelines file never fails a review).
  */
 export function readProjectGuidelines(projectPath: string): string | undefined {
   const file = path.join(projectPath, GUIDELINES_FILE);
-  if (!existsSync(file)) return undefined;
+  let stats;
+  try {
+    stats = lstatSync(file);
+  } catch {
+    return undefined; // absent: the normal, silent case
+  }
+  if (!stats.isFile()) {
+    logStderr(`${GUIDELINES_FILE} is not a regular file (symlink or directory), ignored`);
+    return undefined;
+  }
+  if (stats.size > GUIDELINES_MAX_BYTES) {
+    logStderr(`${GUIDELINES_FILE} exceeds ${GUIDELINES_MAX_BYTES} bytes (${stats.size}), ignored entirely (never truncated)`);
+    return undefined;
+  }
   try {
     const content = readFileSync(file, "utf-8").trim();
     return content.length > 0 ? content : undefined;
