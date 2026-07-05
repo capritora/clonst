@@ -1,6 +1,9 @@
 {
-  "name": "clonst",
+  "name": "@capritora/clonst",
   "version": "1.0.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "MCP server that lets Claude Code get its plans and code adversarially reviewed by Codex, in a ping-pong loop until consensus",
   "type": "module",
   "main": "dist/index.js",

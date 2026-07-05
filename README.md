@@ -70,7 +70,7 @@ codex login
 **Install Clonst** (recommended, via npm):
 
 ```
-claude mcp add clonst --scope user -- npx -y clonst
+claude mcp add clonst --scope user -- npx -y @capritora/clonst
 ```
 
 Or from source:
