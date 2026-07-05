@@ -38,7 +38,7 @@ test("quoteArg leaves simple arguments untouched (flags, paths without spaces)",
   // Backslash paths are only "simple" on Windows: the POSIX whitelist excludes
   // the backslash, so such an argument is legitimately quoted there.
   const args = ["--json", "-", "codex", "a/b/c.json", "key=value"];
-  if (isWindows) args.push("C:\\Users\\Chris\\file.txt");
+  if (isWindows) args.push("C:\\Users\\alice\\file.txt");
   for (const arg of args) {
     assert.equal(quoteArg(arg), arg);
   }

@@ -1,6 +1,6 @@
 # Probe of `codex exec --output-schema <file>`: can the CLI ENFORCE the JSON
 # shape of the final reply (instead of only asking for it in the prompt)?
-# If yes, the consensus layer could rely on it (TODO.md, medium priority).
+# If yes, the consensus layer could rely on it (planned improvement).
 # Run manually (consumes a small request on the ChatGPT subscription).
 #
 # Usage:  .\scripts\probe-codex-output-schema.ps1
