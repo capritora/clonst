@@ -670,6 +670,56 @@ test("final report token cost is precomputed server-side (fresh vs cache re-serv
   );
 });
 
+test("structured report: created at round 1, stable across rounds, sealing instructed at consensus only", async () => {
+  const r1 = await runReview(
+    { content: "Plan v1" },
+    fakeCodex("fake-codex-changes.mjs"),
+    config
+  );
+  assert.notEqual(r1.report_id, null, "a report exists from round 1");
+  assert.notEqual(r1.report_path, null);
+  assert.equal(r1.report_error, null);
+  assert.ok(existsSync(r1.report_path as string));
+  assert.ok(
+    !r1.next_action.includes("clonst_report_summary"),
+    "no sealing instruction while the review is in progress"
+  );
+  const inProgress = readFileSync(r1.report_path as string, "utf-8");
+  assert.match(inProgress, /REVIEW IN PROGRESS/);
+  assert.match(inProgress, /Add a timeout to the API call/, "reviewer words copied verbatim");
+
+  const r2 = await runReview(
+    {
+      content: "Plan v2",
+      thread_id: r1.thread_id as string,
+      changes_made: "Added the timeout in the API client",
+    },
+    fakeCodex("fake-codex.mjs"),
+    config
+  );
+  assert.equal(r2.report_id, r1.report_id, "same report across rounds (identity persisted in session state)");
+  assert.equal(r2.report_path, r1.report_path);
+  assert.match(r2.next_action, /clonst_report_summary/, "consensus instructs the sealing");
+  assert.match(r2.next_action, new RegExp(`report_id="${r2.report_id}"`));
+  const md = readFileSync(r2.report_path as string, "utf-8");
+  assert.match(md, /CONSENSUS - APPROVED at round 2/);
+  assert.match(md, /## Round 1 - CHANGES_NEEDED/);
+  assert.match(md, /## Round 2 - APPROVED/);
+  assert.match(md, /Added the timeout in the API client/, "reviser declarations recorded");
+  assert.ok(!md.includes("PARTIAL HISTORY"), "history is complete when the report starts at round 1");
+});
+
+test("structured report on a cold resume (thread_id with no session state): partial history flagged", async () => {
+  const result = await runReview(
+    { content: "Plan v2", thread_id: "22222222-3333-4444-5555-666666666666" },
+    fakeCodex("fake-codex.mjs"),
+    config
+  );
+  assert.notEqual(result.report_path, null);
+  const md = readFileSync(result.report_path as string, "utf-8");
+  assert.match(md, /PARTIAL HISTORY/, "a mid-session report never pretends to be a complete audit");
+});
+
 test("usageSummary edge cases: no cached key, cached > input (clamped), null usage, compact formatting", () => {
   assert.equal(
     usageSummary({ input_tokens: 20, output_tokens: 15 }),

@@ -40,6 +40,9 @@ structured review loop with a hard exit criterion: consensus, not politeness.
 - **Cost transparency.** The final report shows the reviewer model, rounds,
   total duration and tokens consumed - fresh tokens headlined, cache re-serves
   set apart so cumulative totals never look scarier than they are.
+- **An audit trail that survives the conversation.** Each review writes a
+  structured Markdown report (plain-language summary + every round's demands,
+  changes and rejections, verbatim) under `~/.clonst/reports/`.
 - **Your project's own review rules.** Drop a `CLONST.md` at the project root
   and the reviewer checks your conventions on top of its own standards.
   CLAUDE.md guides the writer; CLONST.md guides the reviewer.
@@ -138,6 +141,27 @@ with a short report, for example:
 > timeout on the API call, both applied. I rejected one suggestion (out of MVP
 > scope) and the reviewer accepted the justification.
 
+Want the round-by-round detail? Just ask ("walk me through the rounds"): Claude
+holds the whole exchange and reports it on demand.
+
+## The review report file
+
+Every review also writes a structured Markdown report under
+`~/.clonst/reports/`, updated at each round - so the audit survives the
+conversation. It opens with the plain-language summary (sealed verbatim after
+consensus), then one section per round with the exact words each party used:
+
+- what the reviewer required, suggested and flagged as risky (verbatim),
+- what the reviser declared changed or rejected before each round (verbatim),
+- per-round model, effort, duration and tokens, plus whole-review totals,
+- an audit trail pointing to the session log and the raw reviewer output.
+
+The file is a pure projection of a server-side state: nothing is reworded
+after the fact, and LLM-originated text is escaped so it cannot fake report
+sections. A report that starts mid-session (resumed thread) is explicitly
+flagged **PARTIAL HISTORY**. Two identifiers, two jobs: `report_id` names the
+report file, `thread_id` resumes the reviewer session.
+
 ## Tools
 
 ### clonst_ping
@@ -166,8 +190,16 @@ Result: `verdict`, `consensus` (true only on a proven APPROVED: clean JSON,
 zero required changes, no fallback parsing), `critique`, `required_changes`,
 `suggestions`, `risks_identified`, `thread_id`, per-round and whole-review
 duration and token usage, `reviewer_model` / `reviewer_reasoning_effort`
-(best-effort resolution: override, else codex config, else null), and a
+(best-effort resolution: override, else codex config, else null),
+`report_id` / `report_path` (the structured report file; `report_error` when
+it could not be written - the review itself is unaffected), and a
 `next_action` instruction (text + typed fields) that drives the loop.
+
+### clonst_report_summary
+
+Seals the plain-language summary into the review report file, verbatim, after
+consensus. Takes `report_id` (returned by clonst_review - not `thread_id`) and
+`summary`. Metadata-only: no reviewer spawn, no quota, idempotent.
 
 ## Configuration
 
@@ -231,6 +263,13 @@ and at the limit the disagreement goes to you for arbitration.
   Codex VS Code extension directly. Default strategy: review the content
   passed in `content` only; reserve `project_path` for reviews that must
   verify real APIs, contracts or files.
+- **Review content persists locally outside the conversation**: session logs
+  and raw reviewer responses under `~/.clonst/logs/`, and the human-readable
+  reports (critiques and change declarations verbatim) under
+  `~/.clonst/reports/`. Delete those directories to purge past reviews.
+- One Clonst server instance per conversation is the operating model; report
+  writes are serialized in-process. Do not point two concurrently running
+  servers at the same `CLONST_HOME`.
 
 ## Troubleshooting
 

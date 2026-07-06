@@ -5,11 +5,13 @@ import { z } from "zod";
 import { isConsensus, parseReviewerResponse } from "../core/consensus.js";
 import { buildFirstRoundPrompt, buildFollowupRoundPrompt } from "../core/formatter.js";
 import { ProviderError, type ReviewerProvider } from "../providers/base.js";
+import { recordRound } from "../core/report.js";
 import type { ClonstConfig } from "../utils/config.js";
 import { SAFE_LANGUAGE_TAG, resolveLanguageName } from "../utils/language.js";
 import { SessionLogger, logStderr } from "../utils/logger.js";
+import { usageSummary } from "../utils/usage.js";
 
-export { resolveLanguageName };
+export { resolveLanguageName, usageSummary };
 
 /**
  * Input schema of clonst_review (ZodRawShape for registerTool).
@@ -112,6 +114,9 @@ export const reviewOutputShape = {
   reviewer_reasoning_effort: z.string().nullable(),
   session_log: z.string(),
   session_migrated: z.boolean().nullable(),
+  report_id: z.string().nullable(),
+  report_path: z.string().nullable(),
+  report_error: z.string().nullable(),
   next_action: z.string(),
   next_action_kind: z.enum(["done", "arbitrate", "checkpoint", "continue"]),
   should_reinvoke: z.boolean(),
@@ -162,6 +167,16 @@ export interface ReviewResult {
    * then migrated to the new thread_id (true/false) to follow the real session.
    */
   session_migrated: boolean | null;
+  /**
+   * Identifier of the structured review report (stable across rounds, distinct
+   * from thread_id: report_id seals the report, thread_id resumes the reviewer).
+   * null when report generation failed (see report_error).
+   */
+  report_id: string | null;
+  /** Path of the human-readable Markdown report, regenerated at every round. */
+  report_path: string | null;
+  /** Non-null when the report could not be written; the review result itself is valid. */
+  report_error: string | null;
   /** Instruction for the calling LLM: what to do now (text version). */
   next_action: string;
   /**
@@ -255,39 +270,6 @@ function mergeUsage(
   return merged;
 }
 
-/** Human-readable token count: 950 -> "950", 1234 -> "1.2k", 260000 -> "260k", 3530000 -> "3.5M". */
-function formatTokenCount(n: number): string {
-  const compact = (value: number, unit: string): string =>
-    `${value.toFixed(1).replace(/\.0$/, "")}${unit}`;
-  if (n >= 1_000_000) return compact(n / 1_000_000, "M");
-  if (n >= 1_000) return compact(n / 1_000, "k");
-  return String(n);
-}
-
-/**
- * Ready-to-quote summary of the whole review's token cost, computed server-side
- * so the calling model never does arithmetic: a literal formula in the
- * instruction could produce negative or misleading numbers on partial usage
- * reports. Fresh input = input minus cache re-serves, clamped at 0. Values come
- * from the CLI's JSONL usage events, already filtered to numbers by the provider.
- * reasoning_output_tokens is NOT added to output_tokens (the OpenAI convention
- * is that output_tokens already includes it).
- */
-export function usageSummary(totalUsage: Record<string, number> | null): string {
-  if (totalUsage === null) return "token usage not reported by the reviewer CLI";
-  const input = totalUsage.input_tokens ?? 0;
-  const cached = totalUsage.cached_input_tokens ?? 0;
-  const output = totalUsage.output_tokens ?? 0;
-  if (cached > 0) {
-    const freshInput = Math.max(0, input - cached);
-    return (
-      `~${formatTokenCount(freshInput)} fresh input + ${formatTokenCount(output)} output tokens ` +
-      `(cumulative input ${formatTokenCount(input)}, of which ${formatTokenCount(cached)} were cache re-serves)`
-    );
-  }
-  return `${formatTokenCount(input)} input + ${formatTokenCount(output)} output tokens`;
-}
-
 const SUGGESTIONS_POLICY =
   `For suggestions and risks_identified: ANALYZE them and decide YOURSELF whether to ` +
   `apply or discard each one, based on your knowledge of the project and the decisions ` +
@@ -314,9 +296,20 @@ function buildNextAction(
   round: number,
   explicitMaxRounds: number | undefined,
   checkpointRounds: number,
-  totalUsage: Record<string, number> | null
+  totalUsage: Record<string, number> | null,
+  reportId: string | null,
+  reportPath: string | null
 ): NextAction {
   if (consensus) {
+    // Sealing is only instructed when a sealable report actually exists
+    // (Codex design review: never promise or seal a report that failed to write).
+    const reportInstruction =
+      reportId !== null && reportPath !== null
+        ? ` A structured round-by-round report was written to ${reportPath}; mention that ` +
+          `path to the user. Finally, seal your summary into it by calling ` +
+          `clonst_report_summary with report_id="${reportId}" and summary = the EXACT ` +
+          `text of the report you just gave the user, verbatim.`
+        : "";
     return {
       kind: "done",
       should_reinvoke: false,
@@ -332,7 +325,7 @@ function buildNextAction(
         `Then what the review concretely brought (bugs avoided, changes the ` +
         `reviewer demanded, critiques you rejected), and your decisions on the ` +
         `suggestions. Do NOT walk through the rounds one by one in this final report, ` +
-        `unless the user asks for it.`,
+        `unless the user asks for it.${reportInstruction}`,
     };
   }
   // Explicit limit set by the user and reached: arbitration, no re-invocation.
@@ -453,6 +446,7 @@ export async function runReview(
   let previousRequiredChanges: string[] | undefined;
   let previousTotalSeconds = 0;
   let previousTotalUsage: Record<string, number> | null = null;
+  let previousReportId: string | null = null;
   if (input.thread_id !== undefined) {
     const raw = logger.readRaw(LAST_VERDICT_FILE);
     if (raw !== null) {
@@ -461,6 +455,7 @@ export async function runReview(
           required_changes?: unknown;
           cumulative_duration_seconds?: unknown;
           cumulative_usage?: unknown;
+          report_id?: unknown;
         };
         if (Array.isArray(parsed.required_changes)) {
           previousRequiredChanges = parsed.required_changes.filter(
@@ -490,6 +485,12 @@ export async function runReview(
             entries.length > 0 &&
             entries.every(([, v]) => typeof v === "number" && Number.isFinite(v) && v >= 0);
           if (allValid) previousTotalUsage = Object.fromEntries(entries) as Record<string, number>;
+        }
+        // Report continuity: the same report file is updated across all rounds
+        // (and across days). A missing/invalid value simply starts a new report
+        // marked as partial history.
+        if (typeof parsed.report_id === "string" && /^(?!\.+$)[A-Za-z0-9._-]+$/.test(parsed.report_id)) {
+          previousReportId = parsed.report_id;
         }
       } catch {
         logStderr(`${LAST_VERDICT_FILE} unreadable, previous required_changes recall and totals omitted`);
@@ -582,6 +583,31 @@ export async function runReview(
   const totalDurationSeconds = Math.round((previousTotalSeconds + durationSeconds) * 10) / 10;
   const totalUsage = mergeUsage(previousTotalUsage, invocation.usage);
 
+  // Structured report (Markdown projection of a per-report state file). Never
+  // fails the review: an error comes back as data (report_error).
+  const report = await recordRound({
+    previousReportId,
+    threadId: invocation.threadId ?? input.thread_id ?? null,
+    sessionLogPath: logger.jsonlPath,
+    rawDirPath: logger.rawDir,
+    round: {
+      round,
+      verdict: verdict.verdict,
+      required_changes: verdict.required_changes,
+      suggestions: verdict.suggestions,
+      risks_identified: verdict.risks_identified,
+      changes_made: input.changes_made ?? null,
+      changes_rejected: input.changes_rejected ?? null,
+      duration_seconds: durationSeconds,
+      usage: invocation.usage,
+      reviewer_model: invocation.model,
+      reviewer_reasoning_effort: invocation.reasoningEffort,
+    },
+    consensus,
+    totalDurationSeconds,
+    totalUsage,
+  });
+
   // Persisted AFTER any migration: the file lives in the final session directory
   // and is re-read on the next round for the server-side recall and the totals.
   logger.saveRaw(
@@ -593,6 +619,9 @@ export async function runReview(
         required_changes: verdict.required_changes,
         cumulative_duration_seconds: totalDurationSeconds,
         cumulative_usage: totalUsage,
+        // Report continuity across rounds; kept from the previous round when
+        // this round's report write failed (the report may recover next round).
+        report_id: report.reportId ?? previousReportId,
       },
       null,
       2
@@ -615,7 +644,9 @@ export async function runReview(
     round,
     input.max_rounds,
     config.suggested_max_rounds,
-    totalUsage
+    totalUsage,
+    report.reportId,
+    report.reportPath
   );
 
   return {
@@ -639,6 +670,9 @@ export async function runReview(
     reviewer_reasoning_effort: invocation.reasoningEffort,
     session_log: logger.jsonlPath,
     session_migrated: sessionMigrated,
+    report_id: report.reportId,
+    report_path: report.reportPath,
+    report_error: report.reportError,
     next_action: nextAction.text,
     next_action_kind: nextAction.kind,
     should_reinvoke: nextAction.should_reinvoke,

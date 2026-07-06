@@ -65,6 +65,11 @@ export class SessionLogger {
     return this._jsonlPath;
   }
 
+  /** Directory of the session's raw CLI responses (exposed for the report's audit trail). */
+  get rawDir(): string {
+    return this._rawDir;
+  }
+
   /**
    * Renames the session (JSONL file + raw directory) to a new identifier,
    * typically the reviewer's thread_id once known at round 1. Never throws:

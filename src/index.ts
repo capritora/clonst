@@ -2,7 +2,9 @@
 import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
 import { CodexProvider } from "./providers/codex.js";
+import { ReportError, sealSummary } from "./core/report.js";
 import { formatReviewError, reviewInputShape, reviewOutputShape, runReview } from "./tools/review.js";
 import { loadConfig } from "./utils/config.js";
 import { logStderr } from "./utils/logger.js";
@@ -96,6 +98,51 @@ async function main(): Promise<void> {
       } catch (err) {
         return {
           content: [{ type: "text", text: JSON.stringify(formatReviewError(err), null, 2) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    "clonst_report_summary",
+    {
+      description:
+        "Seal your plain-language summary into the structured review report file, verbatim. " +
+        "Call it once after a consensus, with the report_id returned by clonst_review (NOT the " +
+        "thread_id: report_id identifies the report file, thread_id resumes the reviewer session) " +
+        "and the exact text of the final report you gave the user. Metadata-only: no reviewer " +
+        "spawn, no LLM quota. Idempotent: calling it again overwrites the summary.",
+      inputSchema: {
+        report_id: z
+          .string()
+          .regex(/^(?!\.+$)[A-Za-z0-9._-]+$/)
+          .describe("The report_id returned by clonst_review (distinct from thread_id)."),
+        summary: z
+          .string()
+          .min(1)
+          .describe("The exact plain-language summary you gave the user, verbatim."),
+      },
+      outputSchema: {
+        status: z.literal("ok"),
+        report_path: z.string(),
+      },
+    },
+    async (input) => {
+      try {
+        const { reportPath } = await sealSummary(input.report_id, input.summary);
+        const result = { status: "ok" as const, report_path: reportPath };
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+          structuredContent: result,
+        };
+      } catch (err) {
+        const message =
+          err instanceof ReportError
+            ? err.message
+            : `Sealing failed: ${err instanceof Error ? err.message : String(err)}`;
+        return {
+          content: [{ type: "text", text: JSON.stringify({ status: "error", message }) }],
           isError: true,
         };
       }

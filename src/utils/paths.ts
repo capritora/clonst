@@ -16,3 +16,13 @@ export function logsDir(): string {
 export function configPath(): string {
   return path.join(clonstHome(), "config.json");
 }
+
+/** Human-readable review reports (Markdown), one file per review. */
+export function reportsDir(): string {
+  return path.join(clonstHome(), "reports");
+}
+
+/** Report state files (JSON), the single source of truth the Markdown is projected from. */
+export function reportStateDir(): string {
+  return path.join(reportsDir(), "state");
+}
