@@ -38,7 +38,8 @@ structured review loop with a hard exit criterion: consensus, not politeness.
   `~/.clonst/config.json` gives reviews their own setting (e.g. a faster,
   cheaper effort) without touching your Codex extension - see Configuration.
 - **Cost transparency.** The final report shows the reviewer model, rounds,
-  total duration and tokens consumed.
+  total duration and tokens consumed - fresh tokens headlined, cache re-serves
+  set apart so cumulative totals never look scarier than they are.
 - **Your project's own review rules.** Drop a `CLONST.md` at the project root
   and the reviewer checks your conventions on top of its own standards.
   CLAUDE.md guides the writer; CLONST.md guides the reviewer.
@@ -131,7 +132,8 @@ Reviews happen on their own, but you can also steer them:
 You see each revision happen in the conversation, and at consensus Claude ends
 with a short report, for example:
 
-> Clonst review: GPT-5.5 (high effort), 2 rounds, 5 min 30 s, ~500k tokens.
+> Clonst review: GPT-5.5 (high effort), 2 rounds, 5 min 30 s, ~210k fresh input
+> + 18k output tokens (cumulative input 2.8M, of which 2.6M were cache re-serves).
 > The reviewer required an anti-double-correction bound on the migration and a
 > timeout on the API call, both applied. I rejected one suggestion (out of MVP
 > scope) and the reviewer accepted the justification.

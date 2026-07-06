@@ -59,7 +59,7 @@ export const reviewInputShape = {
     .string()
     .optional()
     .describe(
-      "Absolute path of the project: the reviewer runs there and can read the real files. Reserve it for reviews that must verify existing APIs/contracts/files: by default the content parameter is enough, and the ENTIRE project (including .env and secrets) becomes readable by the reviewer when this parameter is set."
+      "Absolute path of the project: the reviewer runs there and can read the real files. Reserve it for reviews that must verify existing APIs/contracts/files: by default the content parameter is enough. When set, the ENTIRE project (including .env and secrets) becomes readable by the reviewer, and token consumption can grow sharply: the reviewer explores files agentically, repeatedly re-sending its growing context (largely served from cache when the CLI reports cache hits). Pass it only when independent verification adds value."
     ),
   language: z
     .string()
@@ -255,6 +255,39 @@ function mergeUsage(
   return merged;
 }
 
+/** Human-readable token count: 950 -> "950", 1234 -> "1.2k", 260000 -> "260k", 3530000 -> "3.5M". */
+function formatTokenCount(n: number): string {
+  const compact = (value: number, unit: string): string =>
+    `${value.toFixed(1).replace(/\.0$/, "")}${unit}`;
+  if (n >= 1_000_000) return compact(n / 1_000_000, "M");
+  if (n >= 1_000) return compact(n / 1_000, "k");
+  return String(n);
+}
+
+/**
+ * Ready-to-quote summary of the whole review's token cost, computed server-side
+ * so the calling model never does arithmetic: a literal formula in the
+ * instruction could produce negative or misleading numbers on partial usage
+ * reports. Fresh input = input minus cache re-serves, clamped at 0. Values come
+ * from the CLI's JSONL usage events, already filtered to numbers by the provider.
+ * reasoning_output_tokens is NOT added to output_tokens (the OpenAI convention
+ * is that output_tokens already includes it).
+ */
+export function usageSummary(totalUsage: Record<string, number> | null): string {
+  if (totalUsage === null) return "token usage not reported by the reviewer CLI";
+  const input = totalUsage.input_tokens ?? 0;
+  const cached = totalUsage.cached_input_tokens ?? 0;
+  const output = totalUsage.output_tokens ?? 0;
+  if (cached > 0) {
+    const freshInput = Math.max(0, input - cached);
+    return (
+      `~${formatTokenCount(freshInput)} fresh input + ${formatTokenCount(output)} output tokens ` +
+      `(cumulative input ${formatTokenCount(input)}, of which ${formatTokenCount(cached)} were cache re-serves)`
+    );
+  }
+  return `${formatTokenCount(input)} input + ${formatTokenCount(output)} output tokens`;
+}
+
 const SUGGESTIONS_POLICY =
   `For suggestions and risks_identified: ANALYZE them and decide YOURSELF whether to ` +
   `apply or discard each one, based on your knowledge of the project and the decisions ` +
@@ -280,7 +313,8 @@ function buildNextAction(
   threadId: string | null,
   round: number,
   explicitMaxRounds: number | undefined,
-  checkpointRounds: number
+  checkpointRounds: number,
+  totalUsage: Record<string, number> | null
 ): NextAction {
   if (consensus) {
     return {
@@ -293,8 +327,9 @@ function buildNextAction(
         `with a brief review report to the user (2-3 sentences maximum): the reviewer ` +
         `used (reviewer_model / reviewer_reasoning_effort, "unknown" if null), the ` +
         `number of rounds, the total review duration (total_duration_seconds field, ` +
-        `converted to readable minutes) with the tokens consumed (total_usage, ` +
-        `briefly), what the review concretely brought (bugs avoided, changes the ` +
+        `converted to readable minutes), and the token cost stated exactly as: ` +
+        `"${usageSummary(totalUsage)}" (precomputed server-side, quote it as is). ` +
+        `Then what the review concretely brought (bugs avoided, changes the ` +
         `reviewer demanded, critiques you rejected), and your decisions on the ` +
         `suggestions. Do NOT walk through the rounds one by one in this final report, ` +
         `unless the user asks for it.`,
@@ -579,7 +614,8 @@ export async function runReview(
     invocation.threadId,
     round,
     input.max_rounds,
-    config.suggested_max_rounds
+    config.suggested_max_rounds,
+    totalUsage
   );
 
   return {

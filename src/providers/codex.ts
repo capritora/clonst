@@ -108,7 +108,12 @@ export function parseCodexEvents(jsonl: string): ParsedCodexEvents {
       if (usage && typeof usage === "object" && !Array.isArray(usage)) {
         const numeric: Record<string, number> = {};
         for (const [key, value] of Object.entries(usage)) {
-          if (typeof value === "number") numeric[key] = value;
+          // Finite and >= 0 only: a NaN would poison every cumulative sum
+          // downstream, a negative would corrupt the fresh-token computation
+          // (same policy as the cumulative state reloaded from last_verdict.json).
+          if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+            numeric[key] = value;
+          }
         }
         result.usage = numeric;
       } else {

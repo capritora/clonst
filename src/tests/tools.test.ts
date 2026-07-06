@@ -9,7 +9,7 @@ import { ProviderError } from "../providers/base.js";
 import { DEFAULT_CONFIG } from "../utils/config.js";
 import { logsDir } from "../utils/paths.js";
 import { z } from "zod";
-import { InvalidInputError, formatReviewError, resolveLanguageName, reviewInputShape, reviewOutputShape, runReview } from "../tools/review.js";
+import { InvalidInputError, formatReviewError, resolveLanguageName, reviewInputShape, reviewOutputShape, runReview, usageSummary } from "../tools/review.js";
 
 const projectRoot = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const fixture = (name: string) => path.join(projectRoot, "scripts", "fixtures", name);
@@ -648,6 +648,44 @@ test("cumulative duration and usage: round 1 = current round, round 2 adds up (s
   );
   // The final consensus report must require the total duration
   assert.match(r2.next_action, /total review duration/);
+});
+
+test("final report token cost is precomputed server-side (fresh vs cache re-serves, no arithmetic left to the model)", async () => {
+  // Round 1 usage: input 10, cached 4, output 5 -> fresh input 6, quoted verbatim.
+  const r1 = await runReview({ content: "Plan v1" }, fakeCodex("fake-codex.mjs"), config);
+  assert.match(
+    r1.next_action,
+    /"~6 fresh input \+ 5 output tokens \(cumulative input 10, of which 4 were cache re-serves\)"/
+  );
+  // Round 2 on the same thread: the quoted summary covers the CUMULATIVE usage
+  // (20/8/10 -> fresh 12), not just the last round's.
+  const r2 = await runReview(
+    { content: "Plan v2", thread_id: r1.thread_id as string, changes_made: "fixes" },
+    fakeCodex("fake-codex.mjs"),
+    config
+  );
+  assert.match(
+    r2.next_action,
+    /"~12 fresh input \+ 10 output tokens \(cumulative input 20, of which 8 were cache re-serves\)"/
+  );
+});
+
+test("usageSummary edge cases: no cached key, cached > input (clamped), null usage, compact formatting", () => {
+  assert.equal(
+    usageSummary({ input_tokens: 20, output_tokens: 15 }),
+    "20 input + 15 output tokens",
+    "without cache data, no fresh/cached split is invented"
+  );
+  assert.match(
+    usageSummary({ input_tokens: 10, cached_input_tokens: 25, output_tokens: 5 }),
+    /^~0 fresh input /,
+    "cached > input (inconsistent CLI report): clamped at 0, never negative"
+  );
+  assert.equal(usageSummary(null), "token usage not reported by the reviewer CLI");
+  assert.equal(
+    usageSummary({ input_tokens: 3_530_000, cached_input_tokens: 3_270_000, output_tokens: 24_000 }),
+    "~260k fresh input + 24k output tokens (cumulative input 3.5M, of which 3.3M were cache re-serves)"
+  );
 });
 
 test("totals without previous state (thread_id resumed cold, file absent): restart from the current round", async () => {
