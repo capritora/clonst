@@ -75,8 +75,10 @@ async function main(): Promise<void> {
       description:
         "Have a plan, code or proposal critiqued by Codex (a second LLM, through its CLI and the user's " +
         "ChatGPT subscription). One call = one structured critique (APPROVED/CHANGES_NEEDED verdict, " +
-        "required changes, suggestions, risks). The revision loop lives on your side: apply the critiques, " +
-        "then call this tool again with the revised content and the returned thread_id - the reviewer keeps " +
+        "required changes, suggestions, risks). The revision loop lives on your side: critically evaluate " +
+        "each critique - apply what holds, reject with justification what is wrong, drifts from the " +
+        "project's intent, or would break something else - then call this tool again with the revised " +
+        "content and the returned thread_id - the reviewer keeps " +
         "its session memory across rounds. Loop until consensus=true, following the returned next_action " +
         "field, or until the user decides to stop. " +
         "WHEN TO USE IT: the criterion is LOGIC, not size. Call it by default, without being asked, for any " +

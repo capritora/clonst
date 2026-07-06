@@ -753,6 +753,63 @@ test("USER DECISION with the explicit limit reached: arbitrate wins, relay appen
   assert.match(result.next_action, /relay it to\s+the user verbatim/);
 });
 
+test("critical application: the continue branch demands evaluation, blast radius and a traceable user pause", async () => {
+  const result = await runReview({ content: "Plan" }, fakeCodex("fake-codex-changes.mjs"), config);
+  assert.equal(result.next_action_kind, "continue");
+  assert.match(result.next_action, /Evaluate each required_change critically before applying it/);
+  assert.match(result.next_action, /blast radius/);
+  assert.match(
+    result.next_action,
+    /STOP before editing or re-invoking clonst_review/,
+    "the user pause is unambiguous against should_reinvoke=true (Codex review)"
+  );
+  assert.match(
+    result.next_action,
+    /carry their arbitration into changes_made or changes_rejected/,
+    "the arbitration carriers are named explicitly"
+  );
+  assert.match(result.next_action, /never reject out of convenience/);
+});
+
+test("critical application: present in the periodic and user-decision checkpoints too (self-contained texts)", async () => {
+  const r1 = await runReview({ content: "Plan" }, fakeCodex("fake-codex-changes.mjs"), config);
+  const periodic = await runReview(
+    { content: "Plan v5", thread_id: r1.thread_id as string, round: config.suggested_max_rounds },
+    fakeCodex("fake-codex-changes.mjs"),
+    config
+  );
+  assert.equal(periodic.next_action_kind, "checkpoint");
+  assert.match(periodic.next_action, /Evaluate each required_change critically/);
+
+  const userDecision = await runReview({ content: "Plan" }, fakeCodex("fake-codex-userdecision.mjs"), config);
+  assert.equal(userDecision.next_action_kind, "checkpoint");
+  assert.match(userDecision.next_action, /Evaluate each required_change critically/);
+});
+
+test("critical application: no typographic seams where the factored clause is interpolated", async () => {
+  // Regression guard (Codex review): factored text regresses easily into
+  // "solution.Then" or "solution.. Then" when a branch is edited.
+  const cont = await runReview({ content: "Plan" }, fakeCodex("fake-codex-changes.mjs"), config);
+  assert.match(cont.next_action, /No consensus\. Evaluate each required_change/);
+  assert.match(cont.next_action, /toward a\s+solution\. Then re-invoke clonst_review/);
+
+  const r1 = await runReview({ content: "Plan" }, fakeCodex("fake-codex-changes.mjs"), config);
+  const periodic = await runReview(
+    { content: "Plan v5", thread_id: r1.thread_id as string, round: config.suggested_max_rounds },
+    fakeCodex("fake-codex-changes.mjs"),
+    config
+  );
+  assert.match(periodic.next_action, /If they continue: Evaluate each required_change/);
+
+  const userDecision = await runReview({ content: "Plan" }, fakeCodex("fake-codex-userdecision.mjs"), config);
+  assert.match(userDecision.next_action, /Once the user has arbitrated: Evaluate each required_change/);
+
+  for (const action of [cont.next_action, periodic.next_action, userDecision.next_action]) {
+    assert.ok(!action.includes(".."), "no doubled punctuation");
+    assert.ok(!/\.[A-Z]/.test(action.replace(/clonst_review\.\w/g, "")), "no missing space after a period");
+  }
+});
+
 test("USER DECISION without a thread_id: the resume-impossible branch dominates, relay still appended", async () => {
   const result = await runReview({ content: "Plan" }, fakeCodex("fake-codex-nothread-userdecision.mjs"), config);
   assert.equal(result.thread_id, null);

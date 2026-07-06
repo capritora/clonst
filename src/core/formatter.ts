@@ -113,6 +113,12 @@ Verdict rules:
   preference is never blocking: put it in risks_identified prefixed exactly with the
   literal marker "USER DECISION: ", followed by the open question the human developer
   must arbitrate.
+- Before adding any item to required_changes in any round, check whether the remedy
+  you demand could break callers, contracts, data shapes, configuration, or behavior
+  elsewhere. With project access, inspect the relevant usages when the risk is
+  material; without it, state the assumption your demand rests on. Do not demand a
+  remedy that creates collateral damage: require a safer route, or state the
+  constraint the reviser must preserve.
 </output_format>`;
 }
 
@@ -237,7 +243,7 @@ export function buildFollowupRoundPrompt(input: FollowupRoundPromptInput): strin
     : "The reviser did not provide a change summary: compare against the previous version yourself.";
 
   const changesRejected = input.changesRejected?.trim()
-    ? `\nCritiques rejected by the reviser (with their justification):\n${input.changesRejected}\n\nEvaluate these justifications: if a rejection is poorly founded, put the point back in required_changes and explain why the justification does not hold.`
+    ? `\nCritiques rejected by the reviser (with their justification):\n${input.changesRejected}\n\nEvaluate these justifications: if a rejection is poorly founded, put the point back in required_changes and explain why the justification does not hold. When a rejection invokes collateral damage and the justification holds, do not re-demand the same change: either accept the reviser's alternative, or counter-propose a different route that solves your original problem without the damage. Converge on a solution, not on a win.`
     : "";
 
   const roundHeader =
@@ -284,7 +290,10 @@ Verify ROUND BY ROUND:
    technically and still break what the developer wanted: flag that explicitly.
    Do not second-guess accepted decisions: only flag contradictions with
    stated/evident intent or silent behavior changes.
-4. Did the changes introduce new problems?
+4. Did the changes introduce new problems? Hunt specifically for ripple effects
+   FAR from the edited code: callers of changed functions, shared data shapes,
+   contracts, configuration, behavior other modules rely on. A revision is only
+   addressed if it does not break something else.
 5. Do not re-report what is fixed; do not recycle old points by rewording them.
 If everything is addressed and nothing new is blocking: APPROVED.
 </task>

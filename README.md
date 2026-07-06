@@ -264,6 +264,13 @@ pauses the ping-pong and must reach you verbatim as an open question: Claude
 may not decide it, execute it, or drop it. A proven silent change of
 user-visible behavior, on the other hand, can block the review outright.
 
+The scrutiny is symmetric. Claude does not apply critiques blindly: each
+demand is checked for factual correctness, intent fit and blast radius
+(what else depends on the thing being changed) before being applied - and a
+demand that would break something else is rejected with a justification and a
+safer alternative, which the reviewer must engage with rather than repeat
+itself. Both models argue toward a solution; deadlocks go to you.
+
 ### Round limits: unlimited by default
 
 Say nothing and the ping-pong continues until consensus, with a check-in every

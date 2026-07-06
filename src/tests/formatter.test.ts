@@ -157,6 +157,38 @@ test("intent drift: verdict rules carry the exact marker; the marker is a never-
   }
 });
 
+test("blast radius: the demand-side rule reaches BOTH prompts and carries the any-round scope", () => {
+  const first = buildFirstRoundPrompt({ content: "x", hasProjectAccess: false });
+  const followup = buildFollowupRoundPrompt({ round: 2, revisedContent: "v2" });
+  for (const prompt of [first, followup]) {
+    assert.ok(
+      prompt.includes("Before adding any item to required_changes in any round"),
+      "the any-round scope is what carries the guarantee (Codex review)"
+    );
+    assert.ok(prompt.includes("Do not demand a\n  remedy that creates collateral damage"));
+    assert.ok(prompt.includes("state the assumption your demand rests on"));
+  }
+});
+
+test("blast radius: followup hunts ripple effects far from the edited code", () => {
+  const prompt = buildFollowupRoundPrompt({ round: 2, revisedContent: "v2" });
+  assert.ok(prompt.includes("ripple effects"));
+  assert.ok(prompt.includes("A revision is only\n   addressed if it does not break something else"));
+});
+
+test("constructive disagreement: rejection evaluation AND converge-not-win coexist in the followup", () => {
+  const prompt = buildFollowupRoundPrompt({
+    round: 2,
+    revisedContent: "v2",
+    changesRejected: "- Rejected: the demanded remedy breaks the export flow",
+  });
+  assert.ok(prompt.includes("if a rejection is poorly founded, put the point back"));
+  assert.ok(prompt.includes("counter-propose a different route"));
+  assert.ok(prompt.includes("Converge on a solution, not on a win"));
+  // And the demand-side blast-radius rule still governs any counter-proposal
+  assert.ok(prompt.includes("Before adding any item to required_changes in any round"));
+});
+
 test("followup prompt at the final round of an explicit limit: maximum effort, arbitration, no complacency", () => {
   const prompt = buildFollowupRoundPrompt({ round: 5, maxRounds: 5, revisedContent: "v5" });
   assert.ok(prompt.includes("FINAL round (5/5)"));
