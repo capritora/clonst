@@ -131,6 +131,32 @@ test("followup prompt without an available recall: no empty recall section", () 
   assert.ok(!prompt.includes("EXACT recall"));
 });
 
+test("intent drift: round 1 checks intent alignment before technical details, never inventing goals", () => {
+  const prompt = buildFirstRoundPrompt({ content: "x", hasProjectAccess: false });
+  assert.ok(prompt.includes("Check intent alignment BEFORE technical details"));
+  assert.ok(prompt.includes("NEVER invent business goals"));
+  assert.ok(prompt.includes("report the ambiguity instead of deciding it yourself"));
+});
+
+test("intent drift: followup checks silent behavior/scope changes without second-guessing accepted decisions", () => {
+  const prompt = buildFollowupRoundPrompt({ round: 2, revisedContent: "v2" });
+  assert.ok(prompt.includes("silently change user-visible behavior"));
+  assert.ok(prompt.includes("Do not second-guess accepted decisions"));
+});
+
+test("intent drift: verdict rules carry the exact marker; the marker is a never-translated protocol literal", () => {
+  const first = buildFirstRoundPrompt({ content: "x", hasProjectAccess: false, language: "French" });
+  const followup = buildFollowupRoundPrompt({ round: 2, revisedContent: "v2", language: "French" });
+  for (const prompt of [first, followup]) {
+    assert.ok(prompt.includes('literal marker "USER DECISION: "'), "the verdict rules name the exact marker");
+    assert.ok(
+      prompt.includes('The marker "USER DECISION: " at the start of a risks_identified item is also a protocol'),
+      "the language rule shields the marker from translation, like the verdict enum"
+    );
+    assert.ok(prompt.includes("A merely POSSIBLE product/business"));
+  }
+});
+
 test("followup prompt at the final round of an explicit limit: maximum effort, arbitration, no complacency", () => {
   const prompt = buildFollowupRoundPrompt({ round: 5, maxRounds: 5, revisedContent: "v5" });
   assert.ok(prompt.includes("FINAL round (5/5)"));

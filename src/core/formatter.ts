@@ -65,7 +65,10 @@ function languageRule(language?: string): string {
     ? `Write all free-text values (critique, required_changes items, suggestions, risks_identified, _feedback) in ${language.trim()}.`
     : `Write all free-text values (critique, required_changes items, suggestions, risks_identified, _feedback) in the language of the reviewed content.`;
   return `${target}
-The verdict value is ALWAYS the literal string "APPROVED" or "CHANGES_NEEDED" - never translated.`;
+The verdict value is ALWAYS the literal string "APPROVED" or "CHANGES_NEEDED" - never translated.
+The marker "USER DECISION: " at the start of a risks_identified item is also a protocol
+literal: keep it exactly in English, with the colon and trailing space, never translated
+or reformatted (the question after the marker follows the requested language).`;
 }
 
 function buildOutputFormat(language?: string): string {
@@ -104,6 +107,12 @@ Verdict rules:
 - A required_change must rest on a concrete mechanism: a bug, a risk, an
   inconsistency, an identifiable debt. Style preferences and personal taste are
   never blocking: they go in suggestions.
+- Intent drift: measure only against STATED or EVIDENT intent, never invented. A
+  silent user-visible behavior or scope change that contradicts that intent is a
+  concrete problem: it may be a required_change. A merely POSSIBLE product/business
+  preference is never blocking: put it in risks_identified prefixed exactly with the
+  literal marker "USER DECISION: ", followed by the open question the human developer
+  must arbitrate.
 </output_format>`;
 }
 
@@ -165,12 +174,17 @@ changes left (consensus).
 <methodology>
 1. Read the entire content before judging.
 2. ${projectAccessNote}
-3. Check in order: factual assumptions (APIs, contracts, numbers), internal
+3. Check intent alignment BEFORE technical details: compare the deliverable with
+   the goal, intended behavior, non-goals and decisions stated in <context>, the
+   project red lines from the review guidelines, and behavior evident from the
+   project itself. NEVER invent business goals: if the intent is ambiguous,
+   report the ambiguity instead of deciding it yourself.
+4. Then check in order: factual assumptions (APIs, contracts, numbers), internal
    consistency, edge cases and failure modes, then quality (clarity,
    maintainability).
-4. ${focusInstruction}
-5. Classify each problem: blocking (required_changes) or minor (suggestions).
-6. Give a global 1-10 score and a verdict consistent with your findings.
+5. ${focusInstruction}
+6. Classify each problem: blocking (required_changes) or minor (suggestions).
+7. Give a global 1-10 score and a verdict consistent with your findings.
 </methodology>
 
 <context>
@@ -264,8 +278,14 @@ Verify ROUND BY ROUND:
 2. Judge the RESULT, not obedience: if a revision solves the substance of your
    critique through a different route than the one you proposed, the point is
    addressed.
-3. Did the changes introduce new problems?
-4. Do not re-report what is fixed; do not recycle old points by rewording them.
+3. Did the revision silently change user-visible behavior, scope or product
+   intent compared with the stated goal, previously accepted decisions, or
+   behavior evident from the project? A revision can satisfy your critique
+   technically and still break what the developer wanted: flag that explicitly.
+   Do not second-guess accepted decisions: only flag contradictions with
+   stated/evident intent or silent behavior changes.
+4. Did the changes introduce new problems?
+5. Do not re-report what is fixed; do not recycle old points by rewording them.
 If everything is addressed and nothing new is blocking: APPROVED.
 </task>
 

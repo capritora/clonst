@@ -43,6 +43,10 @@ structured review loop with a hard exit criterion: consensus, not politeness.
 - **An audit trail that survives the conversation.** Each review writes a
   structured Markdown report (plain-language summary + every round's demands,
   changes and rejections, verbatim) under `~/.clonst/reports/`.
+- **Intent drift is a first-class check.** The reviewer measures the
+  deliverable against your stated goal, not just against technical standards -
+  a "fix" that silently changes the behavior you wanted gets flagged, and
+  product choices are routed to you instead of being decided by an LLM.
 - **Your project's own review rules.** Drop a `CLONST.md` at the project root
   and the reviewer checks your conventions on top of its own standards.
   CLAUDE.md guides the writer; CLONST.md guides the reviewer.
@@ -177,7 +181,7 @@ normally never write these yourself):
 | Parameter | Default | Role |
 |---|---|---|
 | `content` (required) | - | The plan/code to review, complete (later rounds: the full revised version, never a diff) |
-| `context` | none | Round 1: goal, constraints, decisions already made |
+| `context` | none | Round 1: the reviewer's yardstick - goal, intended behavior, non-goals, constraints, decisions already made. The intent-drift check measures the deliverable against it |
 | `project_path` | none | ABSOLUTE project path: Codex runs there and reads the real files (read-only sandbox). See Privacy below |
 | `thread_id` | none | Later rounds: the identifier returned by the previous call (resumes the Codex session) |
 | `round` | 1 (2 with thread_id) | Round number; hard safety cap at 50 |
@@ -241,8 +245,24 @@ reviewer's own standards. Example:
 - LLM results must be matched by ID, never by list position.
 ```
 
+Business invariants belong here too - the red lines the intent-drift check
+should defend. Make them concrete and checkable: do not write "keep it
+simple"; write "free users must be able to export CSV" or "checkout must stay
+one-click".
+
 Guidelines can only ADD checks: a guideline trying to lower the bar or force
 a verdict is ignored and reported as a risk.
+
+### Intent drift and user decisions
+
+The review is not only technical: before checking code quality, the reviewer
+compares the deliverable with the intent you stated (`context`, CLONST.md) or
+that is evident from the project. It never invents your product goals - when
+it spots a possible product preference rather than a proven contradiction, it
+emits a risk starting with the literal marker `USER DECISION: `. Any such item
+pauses the ping-pong and must reach you verbatim as an open question: Claude
+may not decide it, execute it, or drop it. A proven silent change of
+user-visible behavior, on the other hand, can block the review outright.
 
 ### Round limits: unlimited by default
 
