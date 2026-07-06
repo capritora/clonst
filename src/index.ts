@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CodexProvider } from "./providers/codex.js";
@@ -9,7 +10,12 @@ import { logsDir } from "./utils/paths.js";
 import { spawnCLI } from "./utils/process.js";
 
 export const SERVER_NAME = "clonst";
-export const SERVER_VERSION = "1.1.0";
+// Single source of truth: package.json, one level above dist/index.js both in
+// the repo and in the published package. A hardcoded copy here desynchronizes
+// on every `npm version` bump (caught by the smoke test before the 1.1.1 publish).
+export const SERVER_VERSION: string = (
+  createRequire(import.meta.url)("../package.json") as { version: string }
+).version;
 
 // IMPORTANT: with the stdio transport, stdout is reserved for the MCP protocol.
 // All human-readable logging goes to stderr (logStderr), never console.log.
