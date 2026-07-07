@@ -1,11 +1,12 @@
-# Clonst - AI code review for Claude Code, powered by Codex
+# Clonst - AI code review MCP for Claude Code, powered by Codex
 
 [![CI](https://github.com/capritora/clonst/actions/workflows/ci.yml/badge.svg)](https://github.com/capritora/clonst/actions/workflows/ci.yml)
 
 **Get a second AI opinion on your code before it ships.** Clonst is a Model
 Context Protocol (MCP) server that connects Claude Code to OpenAI Codex for
 adversarial code review: Claude writes the plan or the code, Codex critiques
-it, Claude revises, and the loop repeats until both models reach consensus.
+it, Claude revises, and the ping-pong repeats until both models reach
+consensus.
 It runs on your existing ChatGPT subscription through the official Codex CLI.
 No API keys, no extra billing.
 
