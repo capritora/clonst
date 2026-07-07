@@ -47,6 +47,11 @@ structured review loop with a hard exit criterion: consensus, not politeness.
   deliverable against your stated goal, not just against technical standards -
   a "fix" that silently changes the behavior you wanted gets flagged, and
   product choices are routed to you instead of being decided by an LLM.
+- **Collateral damage is hunted on both sides.** Before demanding a change,
+  the reviewer must check what else that change would break (callers,
+  contracts, distant modules); before applying one, Claude must do the same -
+  and a rejection for collateral damage comes with a safer alternative, not a
+  bare veto.
 - **Your project's own review rules.** Drop a `CLONST.md` at the project root
   and the reviewer checks your conventions on top of its own standards.
   CLAUDE.md guides the writer; CLONST.md guides the reviewer.
@@ -93,7 +98,8 @@ in the conversation (in front of you), resubmits with the returned
 `thread_id`, until `consensus: true`. The loop is driven through the caller (the
 `thread_id` travels with each call), while the server keeps per-session
 records on disk: full logs, the previous round's verdict for exact recall,
-and the running duration/token totals. Codex sessions persist on the CLI side.
+the running duration/token totals, and the structured review report
+(regenerated at every round). Codex sessions persist on the CLI side.
 
 ## Quick start
 
@@ -139,11 +145,12 @@ Reviews happen on their own, but you can also steer them:
 You see each revision happen in the conversation, and at consensus Claude ends
 with a short report, for example:
 
-> Clonst review: GPT-5.5 (high effort), 2 rounds, 5 min 30 s, ~210k fresh input
-> + 18k output tokens (cumulative input 2.8M, of which 2.6M were cache re-serves).
-> The reviewer required an anti-double-correction bound on the migration and a
-> timeout on the API call, both applied. I rejected one suggestion (out of MVP
-> scope) and the reviewer accepted the justification.
+> Clonst review: GPT-5.5 (high effort), 2 rounds, 5 min 30 s, ~210k fresh
+> input plus 18k output tokens (cumulative input 2.8M, of which 2.6M were
+> cache re-serves). The reviewer required an anti-double-correction bound on
+> the migration and a timeout on the API call, both applied. I rejected one
+> suggestion (out of MVP scope) and the reviewer accepted the justification.
+> Full round-by-round report: ~/.clonst/reports/2026-07-06-a3f1...md
 
 Want the round-by-round detail? Just ask ("walk me through the rounds"): Claude
 holds the whole exchange and reports it on demand.
@@ -260,9 +267,11 @@ compares the deliverable with the intent you stated (`context`, CLONST.md) or
 that is evident from the project. It never invents your product goals - when
 it spots a possible product preference rather than a proven contradiction, it
 emits a risk starting with the literal marker `USER DECISION: `. Any such item
-pauses the ping-pong and must reach you verbatim as an open question: Claude
-may not decide it, execute it, or drop it. A proven silent change of
-user-visible behavior, on the other hand, can block the review outright.
+must reach you verbatim as an open question: mid-review it pauses the
+ping-pong before anything else happens, and at consensus it lands in the
+final report and the report file. Claude may not decide it, execute it, or
+drop it. A proven silent change of user-visible behavior, on the other hand,
+can block the review outright.
 
 The scrutiny is symmetric. Claude does not apply critiques blindly: each
 demand is checked for factual correctness, intent fit and blast radius
